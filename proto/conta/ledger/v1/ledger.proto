@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package conta.ledger.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// LedgerService é a fonte da verdade do dinheiro: contas, lançamentos em partida dobrada,
+// saldo e extrato (ADR-0004).
+//
+// Convenções do contrato:
+//   - Valores em centavos, int64, sempre positivos; o sentido vem da operação (Credit/Debit).
+//   - Toda escrita exige idempotency_key. A mesma chave com o mesmo pedido devolve sempre a
+//     mesma resposta, inclusive uma recusa de negócio. A mesma chave com pedido diferente
+//     falha com ALREADY_EXISTS e ErrorReason IDEMPOTENCY_KEY_REUSED.
+//   - Erros de domínio voltam como status gRPC com um google.rpc.ErrorInfo nos detalhes:
+//     reason = nome de um valor de ErrorReason, domain = "ledger.conta.local".
+service LedgerService {
+  // Abre uma conta de cliente com saldo zero. Cada CPF tem no máximo uma conta:
+  // ALREADY_EXISTS (ACCOUNT_ALREADY_EXISTS) se o documento já tem conta.
+  rpc OpenAccount(OpenAccountRequest) returns (OpenAccountResponse);
+
+  // Consulta os dados cadastrais de uma conta. Não traz saldo: use GetBalance.
+  // NOT_FOUND (ACCOUNT_NOT_FOUND) se a conta não existe.
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+
+  // Credita uma conta de cliente. A contrapartida é escolhida pelo ledger a partir do motivo.
+  // NOT_FOUND (ACCOUNT_NOT_FOUND).
+  rpc Credit(CreditRequest) returns (CreditResponse);
+
+  // Debita uma conta de cliente. A contrapartida é escolhida pelo ledger a partir do motivo.
+  // FAILED_PRECONDITION (INSUFFICIENT_FUNDS) se o saldo não cobre o valor; NOT_FOUND
+  // (ACCOUNT_NOT_FOUND). UNAVAILABLE se a conta ficou travada além do tempo limite: é
+  // seguro repetir com a mesma chave.
+  rpc Debit(DebitRequest) returns (DebitResponse);
+
+  // Saldo atual de uma conta de cliente. NOT_FOUND (ACCOUNT_NOT_FOUND).
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+
+  // Extrato de uma conta de cliente, do lançamento mais recente para o mais antigo,
+  // paginado por cursor opaco. NOT_FOUND (ACCOUNT_NOT_FOUND).
+  rpc ListStatement(ListStatementRequest) returns (ListStatementResponse);
+}
+
+// Motivos de erro de domínio, enviados como texto em google.rpc.ErrorInfo.reason
+// (por exemplo "ERROR_REASON_INSUFFICIENT_FUNDS"). Gerados aqui para que Go e TS
+// compartilhem os mesmos nomes, sem string escrita à mão.
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  // A conta informada não existe.
+  ERROR_REASON_ACCOUNT_NOT_FOUND = 1;
+  // O saldo da conta não cobre o débito.
+  ERROR_REASON_INSUFFICIENT_FUNDS = 2;
+  // A chave de idempotência já foi usada com um pedido diferente.
+  ERROR_REASON_IDEMPOTENCY_KEY_REUSED = 3;
+  // O pedido viola uma regra de formato (valor, documento, motivo, chave...).
+  ERROR_REASON_INVALID_REQUEST = 4;
+  // Já existe uma conta para o documento (CPF) informado.
+  ERROR_REASON_ACCOUNT_ALREADY_EXISTS = 5;
+}
+
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  ACCOUNT_STATUS_ACTIVE = 1;
+}
+
+// Motivo de um crédito. Cada motivo tem a sua conta interna de contrapartida (ADR-0004).
+enum CreditReason {
+  CREDIT_REASON_UNSPECIFIED = 0;
+  // Saldo inicial da conta (seed de demonstração). Contrapartida: opening_balance.
+  CREDIT_REASON_OPENING = 1;
+  // Dinheiro que chega de fora do banco. Contrapartida: settlement.
+  CREDIT_REASON_EXTERNAL = 2;
+}
+
+// Motivo de um débito. Cada motivo tem a sua conta interna de contrapartida (ADR-0004).
+enum DebitReason {
+  DEBIT_REASON_UNSPECIFIED = 0;
+  // Dinheiro que sai do banco (o Pix enviado, na Fase 3). Contrapartida: settlement.
+  DEBIT_REASON_EXTERNAL = 1;
+}
+
+// Sentido de uma perna do lançamento, do ponto de vista da conta do extrato.
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  // Diminui o saldo da conta de cliente.
+  DIRECTION_DEBIT = 1;
+  // Aumenta o saldo da conta de cliente.
+  DIRECTION_CREDIT = 2;
+}
+
+message Account {
+  // UUID gerado pelo ledger.
+  string account_id = 1;
+  string holder_name = 2;
+  // CPF do titular, só dígitos. Dado sensível: nunca vai para log ou trace sem máscara.
+  string holder_document = 3;
+  AccountStatus status = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message OpenAccountRequest {
+  string idempotency_key = 1;
+  string holder_name = 2;
+  // CPF do titular, 11 dígitos, com dígitos verificadores válidos.
+  string holder_document = 3;
+}
+
+message OpenAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountRequest {
+  string account_id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message CreditRequest {
+  string idempotency_key = 1;
+  string account_id = 2;
+  // Maior que zero.
+  int64 amount_cents = 3;
+  CreditReason reason = 4;
+  // Texto curto para o extrato.
+  string description = 5;
+}
+
+message CreditResponse {
+  // Resultado do lançamento; numa repetição pela mesma chave, é o resultado original.
+  Posting posting = 1;
+}
+
+message DebitRequest {
+  string idempotency_key = 1;
+  string account_id = 2;
+  // Maior que zero.
+  int64 amount_cents = 3;
+  DebitReason reason = 4;
+  // Texto curto para o extrato.
+  string description = 5;
+}
+
+message DebitResponse {
+  // Resultado do lançamento; numa repetição pela mesma chave, é o resultado original.
+  Posting posting = 1;
+}
+
+message GetBalanceRequest {
+  string account_id = 1;
+}
+
+message GetBalanceResponse {
+  string account_id = 1;
+  int64 balance_cents = 2;
+}
+
+message ListStatementRequest {
+  string account_id = 1;
+  // De 1 a 100; zero usa o padrão do servidor (20).
+  int32 page_size = 2;
+  // Vazio na primeira página; depois, o next_page_token da página anterior.
+  string page_token = 3;
+}
+
+message ListStatementResponse {
+  repeated Posting postings = 1;
+  // Vazio quando não há mais páginas.
+  string next_page_token = 2;
+}
+
+// Uma perna de lançamento na conta de cliente, como aparece no extrato.
+message Posting {
+  // Identificador do lançamento (journal entry) ao qual a perna pertence.
+  string entry_id = 1;
+  string account_id = 2;
+  Direction direction = 3;
+  int64 amount_cents = 4;
+  // Saldo da conta logo depois desta perna.
+  int64 balance_after_cents = 5;
+  string description = 6;
+  google.protobuf.Timestamp posted_at = 7;
+}
