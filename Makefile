@@ -2,7 +2,7 @@
 #   docker compose run --rm tools make <alvo>
 # Subir, parar e apagar o ambiente são comandos do docker compose (ver README).
 
-.PHONY: generate proto-lint lint test
+.PHONY: generate proto-lint go-lint go-test vuln lint test
 
 # Recria gen/ do zero a partir de proto/ (ADR-0001). Os modelos de gen/ vêm de
 # tools/templates; o package.json de gen/ts precisa existir antes do pnpm install.
@@ -21,6 +21,19 @@ proto-lint:
 	buf lint
 	buf format -d --exit-code
 
-lint: generate proto-lint
+# Módulos Go escritos à mão (gen/go é código gerado e fica de fora).
+GO_MODULES := $(patsubst %/go.mod,%,$(wildcard services/*/go.mod))
 
-test: generate
+go-lint:
+	@for d in $(GO_MODULES); do echo "==> golangci-lint $$d"; (cd $$d && golangci-lint run ./...) || exit 1; done
+
+go-test:
+	@for d in $(GO_MODULES); do echo "==> go test -race $$d"; (cd $$d && go test -race -count=1 ./...) || exit 1; done
+
+# Vulnerabilidades conhecidas nas dependências (consulta o banco vuln.go.dev).
+vuln:
+	@for d in $(GO_MODULES); do echo "==> govulncheck $$d"; (cd $$d && govulncheck ./...) || exit 1; done
+
+lint: generate proto-lint go-lint
+
+test: generate go-test

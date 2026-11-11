@@ -1,0 +1,36 @@
+version: "2"
+
+run:
+  # Só código escrito à mão: gen/ (gerado pelo buf) não é lintado (ADR-0001).
+  go: "1.27"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - errorlint
+    - gosec
+    - noctx
+    - revive
+    - sloglint
+    - unconvert
+    - unparam
+  settings:
+    sloglint:
+      # Logs sempre pares chave-valor e sempre com contexto, para carregar trace_id.
+      no-mixed-args: true
+      context: all
+      static-msg: true
+  exclusions:
+    generated: lax
+    paths:
+      - gen
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - gen
