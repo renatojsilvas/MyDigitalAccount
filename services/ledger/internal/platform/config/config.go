@@ -22,7 +22,8 @@ type Config struct {
 }
 
 // Postgres é o endereço e as credenciais do banco do ledger (um banco por serviço).
-// A senha nunca deve ir para log.
+// A senha nunca deve ir para log. O serviço usa o papel ledger_app (só DML); o subcomando
+// `ledger migrate` recebe, pelas mesmas variáveis, o papel ledger_owner (ADR-0004).
 type Postgres struct {
 	Host     string
 	Port     uint16
@@ -83,8 +84,8 @@ func loadPostgres(get func(key, def string) string) (Postgres, []error) {
 	var errs []error
 	pg := Postgres{
 		Host:     get("POSTGRES_HOST", "postgres"),
-		User:     get("POSTGRES_USER", ""),
-		Password: get("POSTGRES_PASSWORD", ""),
+		User:     get("LEDGER_DB_USER", ""),
+		Password: get("LEDGER_DB_PASSWORD", ""),
 		Database: get("LEDGER_DB_NAME", "ledger"),
 	}
 	port, err := strconv.ParseUint(get("POSTGRES_PORT", "5432"), 10, 16)
@@ -93,10 +94,10 @@ func loadPostgres(get func(key, def string) string) (Postgres, []error) {
 	}
 	pg.Port = uint16(port)
 	if pg.User == "" {
-		errs = append(errs, errors.New("POSTGRES_USER é obrigatória"))
+		errs = append(errs, errors.New("LEDGER_DB_USER é obrigatória"))
 	}
 	if pg.Password == "" {
-		errs = append(errs, errors.New("POSTGRES_PASSWORD é obrigatória"))
+		errs = append(errs, errors.New("LEDGER_DB_PASSWORD é obrigatória"))
 	}
 	return pg, errs
 }

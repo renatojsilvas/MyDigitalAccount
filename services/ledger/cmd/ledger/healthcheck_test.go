@@ -44,7 +44,7 @@ func TestRunHealthcheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			env := tt.env()
 			// O Postgres não é consultado pelo healthcheck, mas a configuração o exige.
-			env["POSTGRES_USER"], env["POSTGRES_PASSWORD"] = "u", "p"
+			env["LEDGER_DB_USER"], env["LEDGER_DB_PASSWORD"] = "u", "p"
 			err := runHealthcheck(t.Context(), func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("erro = %v, esperado erro = %v", err, tt.wantErr)

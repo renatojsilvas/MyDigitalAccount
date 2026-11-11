@@ -200,6 +200,22 @@ mistura duas convenções no mesmo serviço e faz cada cliente reimplementar o q
 | Spans do `pgx` e métricas do pool | `pgx` com `QueryTracer` do OpenTelemetry e métricas do pool (`pgxpool.Stat`) como métricas assíncronas. A biblioteca será escolhida conferindo a manutenção atual na documentação oficial, no passo correspondente. |
 | Rótulo de status gRPC | Unificar no nome da convenção mais nova, que o `otelgrpc` do ledger já usa (`rpc_response_status_code`, por nome do código), ajustando a instrumentação manual do BFF, que é a que temos controle. Confirmar na especificação de semconv antes de mudar. |
 
+**Como os papéis foram implementados (passo 3a)**
+
+- O script de init (`deploy/postgres/init/01-ledger.sh`) cria `ledger_owner` e `ledger_app`, cria o banco `ledger` com
+  dono `ledger_owner` e tira o `CONNECT` de `PUBLIC`. Senhas em `LEDGER_DB_OWNER_PASSWORD` e `LEDGER_DB_APP_PASSWORD`.
+  O serviço lê as suas em `LEDGER_DB_USER` e `LEDGER_DB_PASSWORD`; `POSTGRES_USER` é só o superusuário.
+- Privilégios concedidos **tabela a tabela na própria migration**: `SELECT` e `INSERT` em `journal_entries` e
+  `postings` (append-only também por privilégio), `UPDATE` só da coluna `balance_cents` em `accounts`, e só de
+  `status_code` e `body` em `idempotency_keys`. Nada de `DELETE`, `TRUNCATE` ou DDL. Um teste de integração tenta cada
+  operação proibida como `ledger_app` e espera `42501`.
+- **Migration como job, não no boot do serviço**: as migrations ficam embutidas no binário (`embed.FS`) e rodam com
+  `ledger migrate`, num contêiner `ledger-migrate` que executa uma vez com `ledger_owner` e sai; o ledger só sobe depois
+  (`service_completed_successfully`). Rodar no boot exigiria dar DDL ao papel do serviço. Goose como biblioteca (mesma
+  versão da CLI da imagem `tools`), com *advisory lock* para réplicas concorrentes do job. Migrations só para frente.
+- Ordem do extrato: `postings.id` é uma identidade gerada pelo banco. Como a conta fica travada durante o lançamento,
+  as pernas de uma conta são inseridas em fila e o `id` segue a ordem em que o saldo mudou; ele é o cursor.
+
 **Atenção, semconv de RPC em evolução**: as convenções semânticas de RPC do OpenTelemetry ainda não são estáveis, e
 nomes de métricas e atributos já mudaram entre versões (o BFF e o ledger divergem justamente por isso). A unificação
 segue a versão que o `otelgrpc` do ledger emite hoje; a cada atualização do `otelgrpc` ou do SDK JS, conferir se os

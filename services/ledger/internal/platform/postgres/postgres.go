@@ -19,16 +19,10 @@ const connectTimeout = 5 * time.Second
 // Os campos da conexão são atribuídos um a um, em vez de montar uma URL, para a senha não
 // precisar de escape e nunca aparecer numa string de conexão que possa ir parar em log.
 func Open(ctx context.Context, cfg config.Postgres) (*pgxpool.Pool, error) {
-	pc, err := pgxpool.ParseConfig("")
+	pc, err := poolConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("configuração do pool: %w", err)
+		return nil, err
 	}
-	pc.ConnConfig.Host = cfg.Host
-	pc.ConnConfig.Port = cfg.Port
-	pc.ConnConfig.User = cfg.User
-	pc.ConnConfig.Password = cfg.Password
-	pc.ConnConfig.Database = cfg.Database
-	pc.ConnConfig.ConnectTimeout = connectTimeout
 
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
@@ -42,4 +36,18 @@ func Open(ctx context.Context, cfg config.Postgres) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("conectando a %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.Database, err)
 	}
 	return pool, nil
+}
+
+func poolConfig(cfg config.Postgres) (*pgxpool.Config, error) {
+	pc, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("configuração do pool: %w", err)
+	}
+	pc.ConnConfig.Host = cfg.Host
+	pc.ConnConfig.Port = cfg.Port
+	pc.ConnConfig.User = cfg.User
+	pc.ConnConfig.Password = cfg.Password
+	pc.ConnConfig.Database = cfg.Database
+	pc.ConnConfig.ConnectTimeout = connectTimeout
+	return pc, nil
 }

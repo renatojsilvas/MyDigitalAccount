@@ -65,6 +65,9 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      # Lidas só pelo script de init (deploy/postgres/init), na primeira inicialização do volume.
+      LEDGER_DB_OWNER_PASSWORD: ${LEDGER_DB_OWNER_PASSWORD:?defina LEDGER_DB_OWNER_PASSWORD no .env}
+      LEDGER_DB_APP_PASSWORD: ${LEDGER_DB_APP_PASSWORD:?defina LEDGER_DB_APP_PASSWORD no .env}
     volumes:
       # Na imagem 18 o diretório de dados fica em /var/lib/postgresql/18/docker: monta-se o pai.
       - postgres-data:/var/lib/postgresql
@@ -97,17 +100,46 @@ services:
       LEDGER_ADMIN_ADDR: ":8081"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
-      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      # Papel restrito do serviço: só DML, sem DDL (ADR-0004).
+      LEDGER_DB_USER: ledger_app
+      LEDGER_DB_PASSWORD: ${LEDGER_DB_APP_PASSWORD:?defina LEDGER_DB_APP_PASSWORD no .env}
       LEDGER_DB_NAME: ledger
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "127.0.0.1:${LEDGER_GRPC_HOST_PORT:-50051}:50051"
       - "127.0.0.1:${LEDGER_ADMIN_HOST_PORT:-8081}:8081"
     depends_on:
+      ledger-migrate:
+        condition: service_completed_successfully
+    # O healthcheck vem do HEALTHCHECK do Dockerfile (curl no alvo dev, subcomando no final).
+
+  # Job de migration: roda uma vez antes do ledger, com o papel dono do schema, e sai. O
+  # ledger só sobe se ele terminar com sucesso. Mesma imagem de desenvolvimento do ledger.
+  ledger-migrate:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/ledger:dev
+    build:
+      context: .
+      dockerfile: services/ledger/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: service:tools
+    working_dir: /workspace/services/ledger
+    command: ["go", "run", "./cmd/ledger", "migrate"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      LEDGER_DB_USER: ledger_owner
+      LEDGER_DB_PASSWORD: ${LEDGER_DB_OWNER_PASSWORD:?defina LEDGER_DB_OWNER_PASSWORD no .env}
+      LEDGER_DB_NAME: ledger
+    depends_on:
       postgres:
         condition: service_healthy
-    # O healthcheck vem do HEALTHCHECK do Dockerfile (curl no alvo dev, subcomando no final).
 
   bff:
     <<: *dev-service

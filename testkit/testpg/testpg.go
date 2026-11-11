@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,6 +120,47 @@ func New(t testing.TB) *Database {
 		}
 	})
 	return db
+}
+
+// EnsureRole garante que o papel de login exista na instância de teste. Papéis são do
+// cluster, compartilhados por todos os bancos de teste: se outro pacote, em paralelo, criar o
+// mesmo papel primeiro, a corrida é absorvida e o papel existente é aproveitado. Por isso a
+// senha precisa ser a mesma em todos os testes que usam o papel.
+func (d *Database) EnsureRole(t testing.TB, name, password string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// DO não aceita parâmetros: nome e senha entram já escapados (identificador e literal).
+	sql := fmt.Sprintf(`DO $$ BEGIN
+  CREATE ROLE %s LOGIN PASSWORD %s;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+END $$`, pgx.Identifier{name}.Sanitize(), quoteLiteral(password))
+	if err := d.exec(ctx, sql); err != nil {
+		t.Fatalf("testpg: criando papel %s: %v", name, err)
+	}
+}
+
+// ConnectAs abre um pool neste banco com outro papel (por exemplo, o papel restrito do
+// serviço), fechado ao fim do teste.
+func (d *Database) ConnectAs(t testing.TB, user, password string) *pgxpool.Pool {
+	t.Helper()
+	cfg := d.Config
+	cfg.User, cfg.Password = user, password
+	pc, err := cfg.PoolConfig(d.Name)
+	if err != nil {
+		t.Fatalf("testpg: %v", err)
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), pc)
+	if err != nil {
+		t.Fatalf("testpg: abrindo pool como %s: %v", user, err)
+	}
+	// Registrado depois do Cleanup de New, roda antes dele: fecha o pool antes do DROP.
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // Drop remove o banco, derrubando conexões abertas. É idempotente.

@@ -49,7 +49,7 @@ func ledgerEnv(db *testpg.Database) map[string]string {
 		"ENVIRONMENT": "test", "LEDGER_GRPC_ADDR": "127.0.0.1:0", "LEDGER_ADMIN_ADDR": "127.0.0.1:0",
 		"SHUTDOWN_TIMEOUT": "2s",
 		"POSTGRES_HOST":    db.Config.Host, "POSTGRES_PORT": strconv.Itoa(int(db.Config.Port)),
-		"POSTGRES_USER": db.Config.User, "POSTGRES_PASSWORD": db.Config.Password, "LEDGER_DB_NAME": db.Name,
+		"LEDGER_DB_USER": db.Config.User, "LEDGER_DB_PASSWORD": db.Config.Password, "LEDGER_DB_NAME": db.Name,
 	}
 }
 
@@ -140,7 +140,7 @@ func TestRunFailsFastWhenPostgresIsUnreachable(t *testing.T) {
 	err = run(t.Context(), envFrom(map[string]string{
 		"ENVIRONMENT": "test", "LEDGER_GRPC_ADDR": "127.0.0.1:0", "LEDGER_ADMIN_ADDR": "127.0.0.1:0",
 		"POSTGRES_HOST": "127.0.0.1", "POSTGRES_PORT": strconv.Itoa(port),
-		"POSTGRES_USER": "u", "POSTGRES_PASSWORD": "senha-secreta",
+		"LEDGER_DB_USER": "u", "LEDGER_DB_PASSWORD": "senha-secreta",
 	}), &syncBuffer{})
 	if err == nil || !strings.Contains(err.Error(), "postgres") {
 		t.Fatalf("esperava falha de conexão com o Postgres no boot, veio %v", err)

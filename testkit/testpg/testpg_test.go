@@ -2,6 +2,7 @@ package testpg_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -120,5 +121,30 @@ func TestDropIsIdempotentAndForcesOpenConnections(t *testing.T) {
 	}
 	if err := db.Drop(ctx); err != nil {
 		t.Fatalf("segundo Drop (idempotência): %v", err)
+	}
+}
+
+func TestEnsureRoleToleratesRacesAndConnectAs(t *testing.T) {
+	db := testpg.New(t)
+	const role, password = "testkit_role", "senha com 'aspas'" //nolint:gosec // credencial só da instância de teste
+
+	// Vários testes (ou pacotes) podem pedir o mesmo papel ao mesmo tempo. Subtestes
+	// paralelos, e não goroutines soltas, porque EnsureRole pode chamar t.Fatal.
+	t.Run("concorrentes", func(t *testing.T) {
+		for i := range 4 {
+			t.Run(fmt.Sprint(i), func(t *testing.T) {
+				t.Parallel()
+				db.EnsureRole(t, role, password)
+			})
+		}
+	})
+
+	pool := db.ConnectAs(t, role, password)
+	var user string
+	if err := pool.QueryRow(t.Context(), "SELECT current_user").Scan(&user); err != nil {
+		t.Fatalf("conectando como %s: %v", role, err)
+	}
+	if user != role {
+		t.Fatalf("current_user = %q, want %q", user, role)
 	}
 }

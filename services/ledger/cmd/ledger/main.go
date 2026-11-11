@@ -33,18 +33,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// `ledger healthcheck`: usado pelo HEALTHCHECK da imagem final, que não tem shell nem curl.
-	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		if err := runHealthcheck(ctx, os.LookupEnv); err != nil {
-			fmt.Fprintln(os.Stderr, "ledger healthcheck:", err)
+	cmd, runFn := "ledger", func() error { return run(ctx, os.LookupEnv, os.Stdout) }
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "healthcheck":
+			// Usado pelo HEALTHCHECK da imagem final, que não tem shell nem curl.
+			cmd, runFn = "ledger healthcheck", func() error { return runHealthcheck(ctx, os.LookupEnv) }
+		case "migrate":
+			// Job que roda antes do serviço, com o papel dono do schema.
+			cmd, runFn = "ledger migrate", func() error { return runMigrate(ctx, os.LookupEnv, os.Stdout) }
+		default:
+			fmt.Fprintf(os.Stderr, "ledger: subcomando desconhecido %q (use healthcheck ou migrate)\n", os.Args[1])
 			stop()
-			os.Exit(1)
+			os.Exit(2)
 		}
-		return
 	}
 
-	if err := run(ctx, os.LookupEnv, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "ledger:", err)
+	if err := runFn(); err != nil {
+		fmt.Fprintln(os.Stderr, cmd+":", err)
 		stop()
 		os.Exit(1)
 	}

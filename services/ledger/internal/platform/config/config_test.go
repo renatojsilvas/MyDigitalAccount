@@ -18,7 +18,7 @@ func lookupFrom(env map[string]string) config.Lookup {
 
 // creds acrescenta as credenciais do Postgres, que são obrigatórias.
 func creds(env map[string]string) map[string]string {
-	env["POSTGRES_USER"], env["POSTGRES_PASSWORD"] = "u", "p"
+	env["LEDGER_DB_USER"], env["LEDGER_DB_PASSWORD"] = "u", "p"
 	return env
 }
 
@@ -69,7 +69,7 @@ func TestLoad(t *testing.T) {
 		{
 			name:    "sem credenciais do Postgres",
 			env:     map[string]string{},
-			wantErr: []string{"POSTGRES_USER", "POSTGRES_PASSWORD"},
+			wantErr: []string{"LEDGER_DB_USER", "LEDGER_DB_PASSWORD"},
 		},
 		{
 			name:    "porta do Postgres inválida",
