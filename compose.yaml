@@ -1,8 +1,10 @@
 # Ponto de entrada do ambiente. Cada arquivo de deploy/compose/ é um grupo (profile):
-# core (tools, Postgres, ledger, bff); obs (passo 8); events e load (fases seguintes).
+# core (tools, Postgres, ledger, bff); obs (observabilidade); events e load (fases seguintes).
 name: conta-digital
 
 include:
   - path: deploy/compose/core.yaml
     # Caminhos relativos (build, volumes) valem a partir da raiz, não de deploy/compose/.
+    project_directory: .
+  - path: deploy/compose/obs.yaml
     project_directory: .

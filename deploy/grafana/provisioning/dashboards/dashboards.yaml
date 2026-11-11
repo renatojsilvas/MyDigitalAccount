@@ -1,0 +1,13 @@
+# Provedor de dashboards: o Grafana lê os JSON de deploy/grafana/dashboards/ (versionados).
+apiVersion: 1
+
+providers:
+  - name: conta-digital
+    folder: Conta Digital
+    type: file
+    # Dashboards só mudam pelo Git: a interface não os edita nem apaga.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

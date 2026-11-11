@@ -2,7 +2,7 @@
 #   docker compose run --rm tools make <alvo>
 # Subir, parar e apagar o ambiente são comandos do docker compose (ver README).
 
-.PHONY: generate proto-lint go-lint go-test ts-lint ts-test vuln lint test
+.PHONY: generate proto-lint go-lint go-test ts-lint ts-test vuln obs-smoke lint test
 
 # Recria gen/ do zero a partir de proto/ (ADR-0001). Os modelos de gen/ vêm de
 # tools/templates; o package.json de gen/ts precisa existir antes do pnpm install.
@@ -38,6 +38,11 @@ ts-lint:
 
 ts-test:
 	pnpm -r --workspace-concurrency=1 run test
+
+# Confere que traces, métricas e logs chegam a Tempo, Prometheus e Loki. Exige o profile obs
+# no ar; por isso não faz parte de `make test`.
+obs-smoke:
+	sh deploy/obs/smoke.sh
 
 # Vulnerabilidades conhecidas nas dependências (consulta o banco vuln.go.dev).
 vuln:

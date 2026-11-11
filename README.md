@@ -26,6 +26,19 @@ docker compose --profile core down -v                     # para e apaga os dado
 docker compose --profile '*' down                         # para TUDO, inclusive o Postgres de teste
 ```
 
+### Observabilidade (profile `obs`)
+
+```bash
+docker compose --profile obs up -d --build                # Collector, Prometheus, Tempo, Loki e Grafana
+docker compose run --rm tools make obs-smoke              # prova que traces, métricas e logs chegam aos 3 backends
+docker compose --profile obs down                         # para (mantém os dados); down -v os apaga
+```
+
+Grafana em `http://127.0.0.1:${GRAFANA_HOST_PORT:-3000}` (sem login, só em `127.0.0.1`, com os três
+datasources já provisionados) e Prometheus em `http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}`.
+A stack usa cerca de 600 MB ociosa; suba só quando for usá-la. Os serviços só passam a exportar
+telemetria para o Collector no passo 9.
+
 ### Testes de integração
 
 `docker compose run --rm tools make test` sobe sozinho o `postgres-test` (Postgres em memória,

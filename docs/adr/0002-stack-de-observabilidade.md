@@ -35,7 +35,7 @@ serviços ──OTLP──> Collector ──> Prometheus (métricas)
 - Logs em JSON no stdout e **também** exportados por OTLP; o stdout continua útil para `docker compose logs`.
 - `/healthz` (processo vivo) e `/readyz` (dependências prontas) em todo serviço, fora do tracing de negócio. Nos serviços Go, ficam numa **porta admin HTTP separada (`:8081`)**, e o gRPC de negócio usa `:50051` (`:9090` é a porta padrão do Prometheus e é evitada). Os serviços Go também expõem `grpc.health.v1`. No BFF, as rotas ficam na porta do Fastify, fora dos hooks de negócio.
 - **Cliente gRPC do BFF (Connect)**: a instrumentação HTTP do OpenTelemetry não cobre HTTP/2, então um interceptor próprio cria o span de cliente (atributos `rpc.*` e status gRPC), registra a métrica de latência e erro por dependência e injeta o `traceparent`.
-- Como cada sinal chega ao seu backend (por exemplo, métricas por `remote_write` do Collector para o Prometheus ou por scrape de um exporter do Collector; logs pelo endpoint OTLP do Loki) será **conferido na documentação das versões fixadas** antes de configurar, no passo da stack.
+- Caminho de cada sinal (decidido e verificado no passo 8, ver seção abaixo): traces por OTLP gRPC ao Tempo, métricas por **remote write** ao Prometheus e logs pelo endpoint OTLP nativo do Loki (`/otlp`).
 
 ### Instrumentação no BFF (Node), decidida no passo 5
 
@@ -44,6 +44,19 @@ serviços ──OTLP──> Collector ──> Prometheus (métricas)
 - **Logs**: o `pino` escreve JSON no stdout e um stream próprio reenvia cada linha ao OpenTelemetry, com `trace_id` e `span_id` como contexto do registro.
 - **`/readyz` do BFF não consulta o ledger**: o BFF degrada de forma parcial (fase 2); tirá-lo do balanceador por causa de uma dependência seria pior que responder algo útil.
 - **Deadline**: `timeoutMs` do Connect vira o header `Grpc-Timeout` (verificado na rede em teste), que o servidor Go enxerga como prazo do contexto.
+
+### A stack no compose, decidida no passo 8
+
+- **Versões** (tag + digest, conferidas nas fontes oficiais): Collector contrib 0.164.0, Prometheus 3.15.1, Tempo 3.1.1, Loki 3.7.9, Grafana 13.2.5. Preferi lançamentos com algumas semanas; o mais novo de cada um tinha dias.
+- **Métricas por remote write, não por scrape nem pelo receptor OTLP do Prometheus**: o Collector continua o único hub, e o Prometheus mantém o contrato clássico (`--web.enable-remote-write-receiver`). O `job` da série vem de `service.name`; os rótulos de recurso não são promovidos a rótulo de métrica, para o conjunto de rótulos ficar pequeno. Os alvos raspados são só a própria stack (Collector, Tempo, Loki, Grafana, Prometheus).
+- **Nomes de componente do Collector 0.164**: `otlp_grpc`, `otlp_http` e `prometheus_remote_write`, e não `otlp`, `otlphttp` e `prometheusremotewrite` como em versões anteriores. A configuração é validada com `otelcol-contrib validate`.
+- **Tempo 3.x em modo monolítico (`-target=all`) com disco local, sem Kafka**: confirmado no exemplo oficial `single-binary` da versão 3.1.1. O Tempo 3.0 passou a exigir Kafka só na arquitetura distribuída. O compactor foi removido, e a retenção de blocos fica em `overrides.defaults.compaction.block_retention` (48 h). A chave é aceita pelo `-config.verify`, mas o **efeito** da retenção não foi observado, porque exigiria esperar 48 h.
+- **Loki em instância única**, com `allow_structured_metadata: true` (o OTLP leva `trace_id` e `span_id` como metadados estruturados) e retenção de 72 h. O Prometheus guarda 7 dias.
+- **Healthcheck em imagens sem shell**: Collector, Tempo e Loki não têm sh, wget nem curl. `deploy/obs/Dockerfile` copia um busybox estático (musl, 1,3 MB) para cada uma, e o healthcheck chama `/busybox wget`. Prometheus e Grafana já têm `wget`.
+- **Grafana sem login, com papel de administrador, só em `127.0.0.1`** (`GF_AUTH_ANONYMOUS_*`): é uma decisão de desenvolvimento local, para ninguém configurar nada à mão. Datasources e dashboards são provisionados como código e ficam somente leitura. Não serve para nenhum ambiente compartilhado.
+- **Limites de memória** (`mem_limit`): Collector 256 MB (com `memory_limiter` em 192 MB), Prometheus 512 MB, Tempo 512 MB, Loki 512 MB e Grafana 512 MB. Uso medido com a stack ociosa: cerca de 565 MB no total; o Grafana chegou a 293 de 384 MB, por isso subiu para 512 MB.
+- **Ligações entre sinais**: o Tempo leva do span aos logs (consulta por `trace_id` em metadado estruturado) e às métricas; o Loki leva do `trace_id` ao Tempo. As consultas estão provisionadas; o salto de ponta a ponta com dados reais é validado no passo 9.
+- **Verificação**: `deploy/obs/smoke.sh` (`docker compose run --rm tools make obs-smoke`) envia um trace, uma métrica e um log por OTLP e confere a chegada em Tempo, Prometheus e Loki e a saúde dos três datasources.
 
 ## Alternativas consideradas
 
