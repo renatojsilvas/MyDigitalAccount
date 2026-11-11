@@ -1,0 +1,33 @@
+# Configuração local e segredos (o .env.example é versionado)
+.env
+.env.*
+!.env.example
+
+# Código gerado (ADR-0001): recriado por make generate
+/gen/
+
+# Go
+*.test
+*.out
+coverage.*
+/services/*/bin/
+/services/*/tmp/
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+dist/
+*.tsbuildinfo
+coverage/
+.vite/
+
+# Claude Code: preferências locais de cada pessoa
+.claude/settings.local.json
+
+# Editor e sistema operacional
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db

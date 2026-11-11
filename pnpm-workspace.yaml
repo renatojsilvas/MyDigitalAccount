@@ -1,0 +1,4 @@
+packages:
+  - bff
+  - web
+  - gen/ts
