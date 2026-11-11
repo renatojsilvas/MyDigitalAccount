@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "golang.go",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bufbuild.vscode-buf",
+    "redhat.vscode-yaml",
+    "ms-vscode-remote.remote-containers"
+  ]
+}

@@ -1,79 +1,104 @@
 # Mini conta digital (Go + TypeScript)
 
-Projeto didático: conta digital com Pix simulado. Referência: `docs/plano-conta-digital.md`.
-Estado atual: `docs/estado-do-projeto.md` (criado ao fim da Fase 0).
+Projeto didático: uma conta digital com Pix simulado, para aprender na prática uma stack comum em
+fintechs (Go nos serviços de domínio, TypeScript/Node no BFF), com observabilidade desde a primeira fase.
+
+- Plano, arquitetura e fases: [`docs/plano-conta-digital.md`](docs/plano-conta-digital.md) e
+  [`docs/arquitetura-conta-digital.md`](docs/arquitetura-conta-digital.md)
+- **Onde o projeto está agora**: [`docs/estado-do-projeto.md`](docs/estado-do-projeto.md)
+- Decisões de arquitetura: [`docs/adr/`](docs/adr/)
+
+**Fase 0 (Fundação) concluída.** Há um `ledger` em Go e um BFF em TypeScript que se falam por gRPC
+(contrato `.proto` primeiro), com um `/ping` ponta a ponta que aparece como **um único trace** no
+Grafana, ligado aos logs. Domínio (contas, Pix, antifraude...) começa na Fase 1.
 
 ## Pré-requisito
 
-Apenas **Docker** com o plugin Compose. Go, Node, pnpm, buf e demais ferramentas rodam em contêiner.
+Apenas **Docker** com o plugin Compose (e Git). Go, Node, pnpm, buf e as demais ferramentas rodam em
+contêiner; **nada é instalado na máquina**. Medido na Fase 0: a stack inteira (core, obs e o Postgres de
+teste, 9 contêineres) usa cerca de **0,9 GB ociosa**; compilações e testes usam mais. O desenvolvimento foi
+feito com ~7,7 GB no Docker Desktop. Em máquina apertada, suba a observabilidade só quando for usá-la.
 
-## Estado da Fase 0
-
-Em andamento; este README é reescrito no passo 10. Já funciona:
-
-```bash
-export HOST_UID=$(id -u) HOST_GID=$(id -g)                # ou defina no .env
-cp .env.example .env                                      # uma vez; ajuste as portas se precisar
-
-docker compose run --rm tools make generate               # gera gen/ a partir do .proto (obrigatório antes de build)
-docker compose run --rm tools make lint test              # lint e testes das duas stacks
-
-docker compose --profile core up -d --build               # Postgres, ledger e BFF, com recarga automática
-curl "http://127.0.0.1:${BFF_HOST_PORT:-8088}/ping?message=oi"
-docker compose --profile core ps                          # todos devem aparecer (healthy)
-docker compose --profile core down                        # para (mantém os dados)
-docker compose --profile core down -v                     # para e apaga os dados
-docker compose --profile '*' down                         # para TUDO, inclusive o Postgres de teste
-```
-
-### Observabilidade (profile `obs`)
+## Primeiros passos
 
 ```bash
-docker compose --profile obs up -d --build                # Collector, Prometheus, Tempo, Loki e Grafana
-docker compose run --rm tools make obs-smoke              # prova que traces, métricas e logs chegam aos 3 backends
-docker compose --profile obs down                         # para (mantém os dados); down -v os apaga
+cp .env.example .env
+# edite o .env: HOST_UID e HOST_GID com `id -u` e `id -g` (no Mac costuma ser 502 e 20)
+
+docker compose run --rm tools make lint test        # critério de pronto: lint e testes das duas stacks
 ```
 
-Grafana em `http://127.0.0.1:${GRAFANA_HOST_PORT:-3000}` (sem login, só em `127.0.0.1`, com os três
-datasources e o dashboard "Conta Digital: visão geral" já provisionados) e Prometheus em
-`http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}`. A stack usa cerca de 600 MB ociosa; suba só quando
-for usá-la.
+A primeira execução constrói a imagem `tools` (alguns minutos) e sobe, sozinho, um Postgres de teste.
 
-Os serviços **só exportam telemetria se** `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`
-estiver definido (descomente no `.env`, ou passe na linha de comando). Para ver tudo funcionando:
+## Comandos do dia a dia
+
+Tarefas rodam **dentro** do contêiner `tools` (`docker compose run --rm tools make <alvo>`). Subir,
+parar e apagar o ambiente são comandos diretos do Compose, porque o `tools` não controla o Docker.
+
+| Quero... | Comando |
+|---|---|
+| Gerar o código dos `.proto` (Go e TS) | `docker compose run --rm tools make generate` |
+| Lint e testes de tudo | `docker compose run --rm tools make lint test` |
+| Só os testes / só o lint | `... make test` / `... make lint` |
+| Vulnerabilidades nas dependências Go | `docker compose run --rm tools make vuln` |
+| Subir Postgres, ledger e BFF (recarga automática) | `docker compose --profile core up -d --build` |
+| Subir a observabilidade | `docker compose --profile obs up -d --build` |
+| Ver o estado | `docker compose --profile core --profile obs ps` |
+| Parar (mantém os dados) | `docker compose --profile core --profile obs down` |
+| Parar e apagar os dados | `docker compose --profile '*' down -v` |
+| Parar **tudo**, inclusive o Postgres de teste | `docker compose --profile '*' down` |
+
+Experimente:
+
+```bash
+docker compose --profile core up -d --build
+curl "http://127.0.0.1:8088/ping?message=oi"          # BFF -> ledger: {"echo":"oi","servedBy":"ledger"}
+
+# chamar o ledger direto por gRPC (o ledger não tem reflection: o .proto descreve o serviço)
+docker compose run --rm tools grpcurl -plaintext -import-path proto -proto conta/ping/v1/ping.proto \
+  -d '{"message":"oi"}' ledger:50051 conta.ping.v1.PingService/Ping
+
+docker compose exec postgres psql -U conta -d ledger   # psql interativo (usa o psql do próprio servidor)
+```
+
+## Observabilidade
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
   docker compose --profile core --profile obs up -d --build
-docker compose run --rm tools make obs-e2e                # um /ping vira UM trace e os logs se ligam a ele
+docker compose run --rm tools make obs-e2e    # um /ping vira UM trace e os logs se ligam a ele
 ```
 
-Depois abra o dashboard no Grafana, gere tráfego (`curl "http://127.0.0.1:8088/ping?message=oi"`) e, nos
-logs, clique no `trace_id` para saltar ao trace no Tempo.
+Os serviços **só exportam telemetria se** `OTEL_EXPORTER_OTLP_ENDPOINT` estiver definido (descomente no
+`.env`, ou passe na linha de comando); sem ele, nada é exportado e os logs seguem no stdout.
 
-### Código gerado com o ambiente no ar
+- **Grafana**: `http://127.0.0.1:3000`, sem login e só em `127.0.0.1` (decisão de desenvolvimento local).
+  Datasources e o dashboard "Conta Digital: visão geral" são provisionados como código. Nos logs, clique
+  no `trace_id` para saltar ao trace no Tempo.
+- **Prometheus**: `http://127.0.0.1:9090`.
+- `make obs-smoke` prova que traces, métricas e logs chegam a Tempo, Prometheus e Loki.
 
-`make generate` sobrescreve `gen/` **no lugar** (sem apagá-lo), e o BFF e o ledger em modo de
-desenvolvimento se recompilam sozinhos em poucos segundos. Para gerar do zero (por exemplo, ao
-remover um `.proto`): `docker compose run --rm tools make clean-gen generate`, e reinicie os
-serviços (`docker compose --profile core restart bff ledger`).
+## Código gerado
 
-### Testes de integração
-
-`docker compose run --rm tools make test` sobe sozinho o `postgres-test` (Postgres em memória,
-sem porta publicada) e espera ele ficar saudável antes de rodar. Ele **continua rodando** depois
-do comando, para os testes seguintes serem rápidos; pare-o com `docker compose --profile '*' down`.
-Cada teste recebe um banco próprio (`testkit/testpg`), criado e removido por ele. Rodar `go test`
-fora do `tools` pula esses testes, com a instrução de como rodá-los.
-
-Comandos úteis:
+`gen/` não vai para o Git (ADR-0001) e é pré-requisito de lint, testes e build das imagens.
+`make generate` o **sobrescreve no lugar**; com o ambiente de desenvolvimento no ar, o BFF e o ledger
+se recompilam sozinhos em poucos segundos. Para gerar do zero (por exemplo, ao remover um `.proto`):
 
 ```bash
-docker compose exec postgres psql -U conta -d ledger      # psql interativo (usa o psql do próprio servidor)
-docker compose run --rm tools grpcurl -plaintext ledger:50051 list
+docker compose run --rm tools make clean-gen generate
+docker compose --profile core restart bff ledger
 ```
 
-Imagens finais (mínimas, sem root; o `make generate` precisa ter rodado):
+## Testes de integração
+
+`make test` sobe o `postgres-test` (Postgres em memória, sem porta publicada) e espera ele ficar saudável.
+Ele **continua rodando** depois, para os testes seguintes serem rápidos (pare-o com `down` acima). Cada
+teste recebe um banco próprio, criado e removido pelo helper `testkit/testpg`. Rodar `go test` fora do
+`tools` pula esses testes, com a instrução de como rodá-los.
+
+## Imagens finais
+
+Mínimas e sem root (ledger em distroless, ~18 MB; BFF em Node slim). Exigem `make generate` antes:
 
 ```bash
 docker compose build tools
@@ -85,10 +110,10 @@ docker build -f bff/Dockerfile --target final \
 
 ## Portas
 
-Há dois tipos de porta, e não se confundem:
+Há dois tipos, e não se confundem:
 
-- **Internas**, na rede do compose (ex.: `POSTGRES_PORT=5432`, `BFF_PORT=8088`): fixas; é como os serviços se falam.
-- **Publicadas no host**, só em `127.0.0.1`, parametrizadas por `*_HOST_PORT` com padrão no compose:
+- **Internas**, na rede do compose (`POSTGRES_PORT=5432`, `BFF_PORT=8088`): fixas; é como os serviços se falam.
+- **Publicadas no host**, só em `127.0.0.1`, parametrizadas por `*_HOST_PORT`:
   `"127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"`.
 
 | Variável | Padrão | Para quê |
@@ -100,5 +125,25 @@ Há dois tipos de porta, e não se confundem:
 | `LEDGER_GRPC_HOST_PORT` | 50051 | gRPC do ledger (`grpcurl` a partir do host) |
 | `LEDGER_ADMIN_HOST_PORT` | 8081 | `/healthz` e `/readyz` do ledger |
 
-Porta ocupada no host? Copie `.env.example` para `.env` e troque só a `*_HOST_PORT`
-(por exemplo `POSTGRES_HOST_PORT=6432`). Novas portas publicadas seguem o mesmo padrão e entram aqui.
+Porta ocupada no host? Troque só a `*_HOST_PORT` no `.env` (por exemplo `POSTGRES_HOST_PORT=6432`).
+Novas portas publicadas seguem o mesmo padrão e entram nesta tabela.
+
+## CI e editor
+
+- **CI** (`.github/workflows/ci.yml`): usa as mesmas imagens e comandos. A cada push e PR roda
+  `make lint test`, o `buf breaking` contra a branch base (só em PR) e a compilação das imagens finais.
+  Em `main` (ou sob demanda) roda também `make obs-e2e`; toda segunda-feira, o `govulncheck`.
+- **Editor**: `.devcontainer/` abre o VS Code dentro do contêiner `tools` (autocompletar e lint sem instalar
+  as linguagens). `.vscode/extensions.json` recomenda as extensões.
+
+## Estrutura
+
+```
+proto/            contratos (buf); gen/ é gerado, fora do Git
+services/ledger/  Go: contas e saldo (na Fase 0, só o ping); os demais serviços nascem nas suas fases
+bff/              TypeScript (Fastify): agrega e protege
+testkit/          helpers de teste compartilhados (Postgres isolado por teste)
+tools/            Dockerfile da imagem de ferramentas (única fonte de versões)
+deploy/           compose por grupo (core, obs), OTel, Prometheus, Tempo, Loki, Grafana
+docs/             plano, arquitetura, ADRs, estado do projeto
+```

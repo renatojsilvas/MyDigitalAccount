@@ -1,0 +1,125 @@
+# CI: usa as MESMAS imagens e os MESMOS comandos do ambiente local (docker compose run --rm
+# tools ...). Nada é instalado no runner além do que ele já traz (Docker e Git).
+#
+# Ações fixadas por SHA de commit, não por tag: uma tag pode ser movida, o SHA não.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Segunda-feira, 06:00 UTC: varredura de vulnerabilidades (job vuln).
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint e testes (Go e TypeScript)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # O histórico inteiro: o buf breaking compara o contrato com o da branch base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Preparar o ambiente (.env)
+        run: |
+          cp .env.example .env
+          sed -i "s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" .env
+
+      # O comando de "pronto" da Fase 0: gera o código dos .proto, faz lint (buf, golangci-lint,
+      # ESLint, Prettier, tsc) e roda os testes com -race e Vitest, contra Postgres real.
+      - name: Lint e testes
+        run: docker compose run --rm tools make lint test
+
+      # Mudar um .proto sem quebrar quem o consome: compara com o contrato da branch base.
+      - name: Compatibilidade do contrato (buf breaking)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "${BASE_REF}:refs/heads/${BASE_REF}"
+          docker compose run --rm tools buf breaking --against ".git#branch=${BASE_REF}"
+
+      # Garante que os Dockerfiles das imagens finais (mínimas, sem root) continuam compilando.
+      - name: Imagens finais
+        run: |
+          docker build -f services/ledger/Dockerfile --target final \
+            --build-context tools=docker-image://conta-digital/tools:dev \
+            -t conta-digital/ledger:final .
+          docker build -f bff/Dockerfile --target final \
+            --build-context tools=docker-image://conta-digital/tools:dev \
+            -t conta-digital/bff:final .
+
+  e2e-observability:
+    name: Critério de pronto (um ping, um trace)
+    # Sobe a stack inteira (~1 GB): só em main ou sob demanda, não a cada PR.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Preparar o ambiente (.env)
+        run: |
+          cp .env.example .env
+          sed -i "s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" .env
+
+      - name: Gerar o código dos contratos
+        run: docker compose run --rm tools make generate
+
+      - name: Subir core e obs
+        run: docker compose --profile core --profile obs up -d --build --wait --wait-timeout 300
+
+      - name: Um ping do BFF ao ledger é um único trace, ligado aos logs
+        run: docker compose run --rm tools make obs-e2e
+
+      - name: Logs dos contêineres (se algo falhou)
+        if: failure()
+        run: docker compose --profile '*' logs --no-color > compose-logs.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+          retention-days: 7
+
+      - name: Derrubar tudo
+        if: always()
+        run: docker compose --profile '*' down -v
+
+  vuln:
+    name: Vulnerabilidades (govulncheck)
+    # Só agendado ou manual: uma vulnerabilidade nova no banco não deve quebrar um PR que não a causou.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Preparar o ambiente (.env)
+        run: |
+          cp .env.example .env
+          sed -i "s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" .env
+
+      - name: govulncheck
+        run: docker compose run --rm tools sh -c "make generate vuln"

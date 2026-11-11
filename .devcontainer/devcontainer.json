@@ -1,0 +1,39 @@
+{
+  "name": "Conta Digital (imagem tools)",
+  "dockerComposeFile": ["../compose.yaml"],
+  "service": "tools",
+  "runServices": ["tools"],
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "postCreateCommand": "make generate",
+  "remoteEnv": {
+    "GOPATH": "/cache/gopath",
+    "PATH": "${containerEnv:PATH}:/cache/gopath/bin"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bufbuild.vscode-buf",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "go.gopath": "/cache/gopath",
+        "go.toolsManagement.autoUpdate": true,
+        "gopls": { "build.buildFlags": ["-buildvcs=false"] },
+        "eslint.workingDirectories": [{ "directory": "bff" }],
+        "editor.formatOnSave": true,
+        "[go]": { "editor.defaultFormatter": "golang.go" },
+        "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+        "[proto3]": { "editor.defaultFormatter": "bufbuild.vscode-buf" },
+        "files.watcherExclude": {
+          "**/node_modules/**": true,
+          "**/.pnpm-store/**": true
+        }
+      }
+    }
+  }
+}
