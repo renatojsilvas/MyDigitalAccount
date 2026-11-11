@@ -9,8 +9,38 @@ Apenas **Docker** com o plugin Compose. Go, Node, pnpm, buf e demais ferramentas
 
 ## Estado da Fase 0
 
-Em andamento. Os comandos abaixo passam a existir conforme os passos forem concluídos;
-esta seção é reescrita no passo 10.
+Em andamento; este README é reescrito no passo 10. Já funciona:
+
+```bash
+export HOST_UID=$(id -u) HOST_GID=$(id -g)                # ou defina no .env
+cp .env.example .env                                      # uma vez; ajuste as portas se precisar
+
+docker compose run --rm tools make generate               # gera gen/ a partir do .proto (obrigatório antes de build)
+docker compose run --rm tools make lint test              # lint e testes das duas stacks
+
+docker compose --profile core up -d --build               # Postgres, ledger e BFF, com recarga automática
+curl "http://127.0.0.1:${BFF_HOST_PORT:-8088}/ping?message=oi"
+docker compose --profile core ps                          # todos devem aparecer (healthy)
+docker compose --profile core down                        # para (mantém os dados)
+docker compose --profile core down -v                     # para e apaga os dados
+```
+
+Comandos úteis:
+
+```bash
+docker compose exec postgres psql -U conta -d ledger      # psql interativo (usa o psql do próprio servidor)
+docker compose run --rm tools grpcurl -plaintext ledger:50051 list
+```
+
+Imagens finais (mínimas, sem root; o `make generate` precisa ter rodado):
+
+```bash
+docker compose build tools
+docker build -f services/ledger/Dockerfile --target final \
+  --build-context tools=docker-image://conta-digital/tools:dev -t conta-digital/ledger:final .
+docker build -f bff/Dockerfile --target final \
+  --build-context tools=docker-image://conta-digital/tools:dev -t conta-digital/bff:final .
+```
 
 ## Portas
 
@@ -26,6 +56,8 @@ Há dois tipos de porta, e não se confundem:
 | `BFF_HOST_PORT` | 8088 | BFF (escuta 8088 por dentro) |
 | `GRAFANA_HOST_PORT` | 3000 | Grafana |
 | `PROMETHEUS_HOST_PORT` | 9090 | Prometheus |
+| `LEDGER_GRPC_HOST_PORT` | 50051 | gRPC do ledger (`grpcurl` a partir do host) |
+| `LEDGER_ADMIN_HOST_PORT` | 8081 | `/healthz` e `/readyz` do ledger |
 
 Porta ocupada no host? Copie `.env.example` para `.env` e troque só a `*_HOST_PORT`
 (por exemplo `POSTGRES_HOST_PORT=6432`). Novas portas publicadas seguem o mesmo padrão e entram aqui.

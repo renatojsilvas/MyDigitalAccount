@@ -1,0 +1,105 @@
+# Núcleo do ambiente: ferramentas, Postgres e os serviços da aplicação (ledger e bff).
+# Incluído pelo compose.yaml da raiz. Arquivo autocontido: o Compose carrega cada arquivo
+# incluído isoladamente, então nada aqui pode referenciar serviço ou volume de outro arquivo.
+#
+# Subir:   docker compose --profile core up -d --build   (antes: make generate, no tools)
+# Parar:   docker compose --profile core down            (down -v apaga os dados)
+
+x-dev-service: &dev-service
+  # Mesmo UID/GID do dono do código no host, para não criar arquivos de root no bind mount.
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  init: true
+  restart: unless-stopped
+  volumes:
+    - .:/workspace
+    - cache:/cache
+
+services:
+  # Ferramentas de desenvolvimento. Profile próprio: `docker compose up` não o sobe;
+  # `docker compose run --rm tools <comando>` o ativa sozinho.
+  tools:
+    profiles: ["tools"]
+    image: conta-digital/tools:dev
+    build:
+      context: .
+      dockerfile: tools/Dockerfile
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /workspace
+    init: true
+    volumes:
+      - .:/workspace
+      - cache:/cache
+
+  postgres:
+    profiles: ["core"]
+    # Tag + digest: a tag diz o que se espera, o digest garante exatamente os mesmos bytes.
+    image: postgres:18.6-bookworm@sha256:f1ea2a1a4fb7b68d4836be1fdcb8a6466a89b072158bf9d97663600538c294c5
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+    volumes:
+      # Na imagem 18 o diretório de dados fica em /var/lib/postgresql/18/docker: monta-se o pai.
+      - postgres-data:/var/lib/postgresql
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d ledger"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  ledger:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/ledger:dev
+    build:
+      context: .
+      dockerfile: services/ledger/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: service:tools
+    working_dir: /workspace/services/ledger
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LEDGER_GRPC_ADDR: ":50051"
+      LEDGER_ADMIN_ADDR: ":8081"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports:
+      - "127.0.0.1:${LEDGER_GRPC_HOST_PORT:-50051}:50051"
+      - "127.0.0.1:${LEDGER_ADMIN_HOST_PORT:-8081}:8081"
+    # O healthcheck vem do HEALTHCHECK do Dockerfile (curl no alvo dev, subcomando no final).
+
+  bff:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/bff:dev
+    build:
+      context: .
+      dockerfile: bff/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: service:tools
+    working_dir: /workspace/bff
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BFF_HOST: 0.0.0.0
+      BFF_PORT: "8088"
+      LEDGER_GRPC_URL: http://ledger:50051
+      LEDGER_TIMEOUT_MS: ${LEDGER_TIMEOUT_MS:-1000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports:
+      - "127.0.0.1:${BFF_HOST_PORT:-8088}:8088"
+    depends_on:
+      ledger:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  cache:
+    # Nome fixo: é o mesmo volume de cache (Go, pnpm, npm) usado pelo serviço tools.
+    name: conta-digital_tools-cache

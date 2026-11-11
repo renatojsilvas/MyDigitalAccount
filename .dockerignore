@@ -2,7 +2,7 @@
 .env
 .env.*
 !.env.example
-node_modules
-gen
-dist
+**/node_modules
+bff/dist
+services/*/tmp
 docs

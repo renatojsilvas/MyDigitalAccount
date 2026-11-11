@@ -32,6 +32,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// `ledger healthcheck`: usado pelo HEALTHCHECK da imagem final, que não tem shell nem curl.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := runHealthcheck(ctx, os.LookupEnv); err != nil {
+			fmt.Fprintln(os.Stderr, "ledger healthcheck:", err)
+			stop()
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(ctx, os.LookupEnv, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "ledger:", err)
 		stop()
