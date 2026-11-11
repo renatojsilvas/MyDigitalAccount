@@ -1,0 +1,24 @@
+# Ponto de entrada do ambiente. Os arquivos de deploy/compose/ (core, events, obs, load)
+# entram aqui por `include:` à medida que forem criados (passos 6 e 8).
+name: conta-digital
+
+services:
+  # Ferramentas de desenvolvimento. Profile próprio para que `docker compose up` não o
+  # suba; `docker compose run --rm tools <comando>` o ativa sozinho.
+  tools:
+    profiles: ["tools"]
+    image: conta-digital/tools:dev
+    build:
+      context: .
+      dockerfile: tools/Dockerfile
+    # Mesmo UID/GID do dono do código no host, para não criar arquivos de root no bind
+    # mount. Defina HOST_UID/HOST_GID no .env (no Mac: `id -u` e `id -g`).
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /workspace
+    init: true
+    volumes:
+      - .:/workspace
+      - tools-cache:/cache
+
+volumes:
+  tools-cache:
