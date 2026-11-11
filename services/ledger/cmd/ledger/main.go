@@ -19,6 +19,7 @@ import (
 	"conta.local/ledger/internal/platform/admin"
 	"conta.local/ledger/internal/platform/config"
 	"conta.local/ledger/internal/platform/logging"
+	"conta.local/ledger/internal/platform/postgres"
 	"conta.local/ledger/internal/platform/telemetry"
 )
 
@@ -75,6 +76,12 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		return fmt.Errorf("ouvindo admin em %s: %w", cfg.AdminAddr, err)
 	}
 
+	pool, err := postgres.Open(ctx, cfg.Postgres)
+	if err != nil {
+		return fmt.Errorf("postgres: %w", err)
+	}
+	defer pool.Close()
+
 	healthSrv := health.NewServer() // grpc.health.v1, para clientes e balanceadores gRPC
 	srv := grpcapi.NewServer(grpcapi.ServerOptions{
 		Logger: logger, TracerProvider: tel.Tracer, MeterProvider: tel.Meter, Propagator: tel.Propagator,
@@ -82,11 +89,13 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	grpcapi.RegisterPing(srv, grpcapi.NewPingHandler(serviceName))
 	healthpb.RegisterHealthServer(srv, healthSrv)
 
-	adminSrv := admin.New(logger) // sem dependências externas ainda; o Postgres entra na Fase 1
+	// O /readyz depende do Postgres: sem banco o ledger não pode atender (o /healthz não depende).
+	adminSrv := admin.New(logger, admin.Check{Name: "postgres", Fn: pool.Ping})
 
 	logger.InfoContext(ctx, "serviço iniciando",
 		"version", version, "environment", cfg.Environment,
 		"grpc_addr", grpcLis.Addr().String(), "admin_addr", adminLis.Addr().String(),
+		"postgres_host", cfg.Postgres.Host, "postgres_db", cfg.Postgres.Database,
 		"otlp_export", cfg.OTLPEndpoint != "")
 
 	g, gctx := errgroup.WithContext(ctx)

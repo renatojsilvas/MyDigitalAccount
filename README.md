@@ -23,7 +23,16 @@ curl "http://127.0.0.1:${BFF_HOST_PORT:-8088}/ping?message=oi"
 docker compose --profile core ps                          # todos devem aparecer (healthy)
 docker compose --profile core down                        # para (mantém os dados)
 docker compose --profile core down -v                     # para e apaga os dados
+docker compose --profile '*' down                         # para TUDO, inclusive o Postgres de teste
 ```
+
+### Testes de integração
+
+`docker compose run --rm tools make test` sobe sozinho o `postgres-test` (Postgres em memória,
+sem porta publicada) e espera ele ficar saudável antes de rodar. Ele **continua rodando** depois
+do comando, para os testes seguintes serem rápidos; pare-o com `docker compose --profile '*' down`.
+Cada teste recebe um banco próprio (`testkit/testpg`), criado e removido por ele. Rodar `go test`
+fora do `tools` pula esses testes, com a instrução de como rodá-los.
 
 Comandos úteis:
 

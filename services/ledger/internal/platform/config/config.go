@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 )
 
@@ -17,6 +18,17 @@ type Config struct {
 	AdminAddr       string
 	OTLPEndpoint    string // vazio desliga a exportação OTLP; os logs seguem no stdout
 	ShutdownTimeout time.Duration
+	Postgres        Postgres
+}
+
+// Postgres é o endereço e as credenciais do banco do ledger (um banco por serviço).
+// A senha nunca deve ir para log.
+type Postgres struct {
+	Host     string
+	Port     uint16
+	User     string
+	Password string
+	Database string
 }
 
 // Lookup tem a assinatura de os.LookupEnv. Receber a função, em vez de ler o ambiente
@@ -57,8 +69,34 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	cfg.ShutdownTimeout = timeout
 
+	pg, pgErrs := loadPostgres(get)
+	cfg.Postgres = pg
+	errs = append(errs, pgErrs...)
+
 	if len(errs) > 0 {
 		return Config{}, fmt.Errorf("configuração inválida: %w", errors.Join(errs...))
 	}
 	return cfg, nil
+}
+
+func loadPostgres(get func(key, def string) string) (Postgres, []error) {
+	var errs []error
+	pg := Postgres{
+		Host:     get("POSTGRES_HOST", "postgres"),
+		User:     get("POSTGRES_USER", ""),
+		Password: get("POSTGRES_PASSWORD", ""),
+		Database: get("LEDGER_DB_NAME", "ledger"),
+	}
+	port, err := strconv.ParseUint(get("POSTGRES_PORT", "5432"), 10, 16)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("POSTGRES_PORT inválida: %w", err))
+	}
+	pg.Port = uint16(port)
+	if pg.User == "" {
+		errs = append(errs, errors.New("POSTGRES_USER é obrigatória"))
+	}
+	if pg.Password == "" {
+		errs = append(errs, errors.New("POSTGRES_PASSWORD é obrigatória"))
+	}
+	return pg, errs
 }

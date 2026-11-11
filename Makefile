@@ -21,8 +21,8 @@ proto-lint:
 	buf lint
 	buf format -d --exit-code
 
-# Módulos Go escritos à mão (gen/go é código gerado e fica de fora).
-GO_MODULES := $(patsubst %/go.mod,%,$(wildcard services/*/go.mod))
+# Módulos Go escritos à mão: serviços e testkit (gen/go é código gerado e fica de fora).
+GO_MODULES := $(patsubst %/go.mod,%,$(wildcard services/*/go.mod testkit/go.mod))
 
 go-lint:
 	@for d in $(GO_MODULES); do echo "==> golangci-lint $$d"; (cd $$d && golangci-lint run ./...) || exit 1; done

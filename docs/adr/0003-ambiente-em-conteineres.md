@@ -74,6 +74,15 @@ A mesma estratégia vale para Postgres (fase 0 em diante), Redis (fase 3) e Kafk
 - **O `psql` do `tools` é o 15 do Debian**; para uso interativo, use o `psql` do próprio contêiner do Postgres (`docker compose exec postgres psql`), que sempre casa com a versão do servidor.
 - **`gen/` é pré-requisito do build das imagens** (`make generate` antes). O build não gera o código para não duplicar o pipeline; o CI roda `generate` primeiro.
 
+### 6. Decisões do passo 7 (testes de integração com serviços no compose)
+
+- **`tools` depende de `postgres-test` com `condition: service_healthy`**, então `docker compose run --rm tools make test` já sobe e espera o banco. Um `depends_on` para um serviço de outro profile falha (`no such service`); a saída é dar ao `postgres-test` os profiles `tools` (ativado junto com o `tools`) e `test` (para subi-lo sozinho). O `--profile core up` não o inclui.
+- **Custo aceito**: qualquer `run tools` (até `generate` e `lint`) sobe o `postgres-test` na primeira vez, e ele continua de pé até um `down --profile '*'`. Em troca, o comando de "pronto" não exige flag nem passo extra.
+- **Postgres de teste**: mesma imagem (tag e digest) do de desenvolvimento, dados em `tmpfs`, `fsync=off`, sem porta publicada: só o `tools` o alcança.
+- **Isolamento por banco**: o helper `testkit/testpg` cria `t_<aleatório>` por teste e o remove ao final (`DROP DATABASE ... WITH (FORCE)`, que derruba conexões abertas). Testes paralelos não colidem. Sem `TEST_POSTGRES_HOST`, o teste é pulado com a instrução de como rodá-lo, nunca falha por falta de infraestrutura.
+- **`testkit/` é um módulo Go na raiz**, fora do layout da seção 4 do plano: o helper precisa ser importável por vários serviços (fases 1, 3 e 5), e um `internal/` de um serviço não é visível a outro. Redis e Kafka (fases 3 e 4) ganham seus helpers ali, com a mesma regra de isolamento (prefixo de chave e nome de tópico únicos por teste).
+- **O ledger passou a depender do Postgres**: abre o pool no boot e falha cedo se o banco não responde; o `/readyz` consulta o banco (o `/healthz` não). Foi o mínimo para o teste de integração ter o que provar na Fase 0; o domínio, as migrations e o `sqlc` continuam sendo da Fase 1.
+
 ## Alternativas consideradas (decisões 1 a 3)
 
 | Alternativa | Por que não |
