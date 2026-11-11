@@ -6,6 +6,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from "fastify-type-provider-zod";
+import { hostname } from "node:os";
 import type { DestinationStream } from "pino";
 import { createLedgerClient } from "./clients/ledger.js";
 import type { Config } from "./config.js";
@@ -28,6 +29,8 @@ export interface AppOverrides {
   /** Recebe os interceptors (telemetria) e devolve o transporte do ledger. */
   readonly ledgerTransport?: (interceptors: Interceptor[]) => Transport;
   readonly stdout?: DestinationStream;
+  /** Identificador da instância; por padrão, o hostname (único por contêiner). */
+  readonly instanceId?: string;
 }
 
 export interface BuiltApp {
@@ -46,6 +49,7 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
       serviceName: SERVICE_NAME,
       version: config.serviceVersion,
       environment: config.environment,
+      instanceId: overrides.instanceId ?? hostname(),
       otlpEndpoint: config.otlpEndpoint,
     },
     overrides.telemetry,

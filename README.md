@@ -35,9 +35,28 @@ docker compose --profile obs down                         # para (mantém os dad
 ```
 
 Grafana em `http://127.0.0.1:${GRAFANA_HOST_PORT:-3000}` (sem login, só em `127.0.0.1`, com os três
-datasources já provisionados) e Prometheus em `http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}`.
-A stack usa cerca de 600 MB ociosa; suba só quando for usá-la. Os serviços só passam a exportar
-telemetria para o Collector no passo 9.
+datasources e o dashboard "Conta Digital: visão geral" já provisionados) e Prometheus em
+`http://127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}`. A stack usa cerca de 600 MB ociosa; suba só quando
+for usá-la.
+
+Os serviços **só exportam telemetria se** `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317`
+estiver definido (descomente no `.env`, ou passe na linha de comando). Para ver tudo funcionando:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
+  docker compose --profile core --profile obs up -d --build
+docker compose run --rm tools make obs-e2e                # um /ping vira UM trace e os logs se ligam a ele
+```
+
+Depois abra o dashboard no Grafana, gere tráfego (`curl "http://127.0.0.1:8088/ping?message=oi"`) e, nos
+logs, clique no `trace_id` para saltar ao trace no Tempo.
+
+### Código gerado com o ambiente no ar
+
+`make generate` sobrescreve `gen/` **no lugar** (sem apagá-lo), e o BFF e o ledger em modo de
+desenvolvimento se recompilam sozinhos em poucos segundos. Para gerar do zero (por exemplo, ao
+remover um `.proto`): `docker compose run --rm tools make clean-gen generate`, e reinicie os
+serviços (`docker compose --profile core restart bff ledger`).
 
 ### Testes de integração
 

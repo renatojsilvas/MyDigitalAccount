@@ -165,6 +165,15 @@ describe("traces", () => {
     expect(client.events.some((e) => e.name === "exception")).toBe(true);
   });
 
+  it("identifica a instância no recurso (réplicas não colidem no Prometheus)", async () => {
+    h = createHarness();
+    await h.app.inject({ url: "/ping" });
+    expect(h.spanNamed("GET /ping").resource.attributes).toMatchObject({
+      "service.name": "bff",
+      "service.instance.id": "bff-test-1",
+    });
+  });
+
   it("a sonda de saúde não gera span", async () => {
     h = createHarness();
     await h.app.inject({ url: "/healthz" });

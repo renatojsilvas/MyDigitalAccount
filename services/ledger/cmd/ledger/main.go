@@ -58,8 +58,10 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		return err
 	}
 
+	hostname, _ := os.Hostname() // em contêiner é o ID do contêiner: único por réplica
 	tel, err := telemetry.New(ctx, telemetry.Config{
-		ServiceName: serviceName, Version: version, Environment: cfg.Environment, OTLPEndpoint: cfg.OTLPEndpoint,
+		ServiceName: serviceName, Version: version, Environment: cfg.Environment,
+		InstanceID: hostname, OTLPEndpoint: cfg.OTLPEndpoint,
 	})
 	if err != nil {
 		return err

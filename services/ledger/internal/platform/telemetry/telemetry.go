@@ -25,9 +25,12 @@ import (
 
 // Config identifica o serviço e aponta para o Collector.
 type Config struct {
-	ServiceName  string
-	Version      string
-	Environment  string
+	ServiceName string
+	Version     string
+	Environment string
+	// InstanceID distingue réplicas do mesmo serviço (service.instance.id). Sem ele, duas
+	// réplicas escreveriam séries idênticas no Prometheus. Em contêiner, o hostname já é único.
+	InstanceID   string
 	OTLPEndpoint string // vazio: nada é exportado (os providers continuam funcionando)
 }
 
@@ -64,11 +67,15 @@ func New(ctx context.Context, cfg Config, opts ...Option) (*Telemetry, error) {
 		opt(&o)
 	}
 
-	res, err := resource.New(ctx, resource.WithAttributes(
+	attrs := []attribute.KeyValue{
 		attribute.String("service.name", cfg.ServiceName),
 		attribute.String("service.version", cfg.Version),
 		attribute.String("deployment.environment.name", cfg.Environment),
-	))
+	}
+	if cfg.InstanceID != "" {
+		attrs = append(attrs, attribute.String("service.instance.id", cfg.InstanceID))
+	}
+	res, err := resource.New(ctx, resource.WithAttributes(attrs...))
 	if err != nil {
 		return nil, fmt.Errorf("criando resource: %w", err)
 	}

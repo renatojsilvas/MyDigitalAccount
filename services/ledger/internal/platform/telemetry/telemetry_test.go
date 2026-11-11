@@ -38,7 +38,7 @@ func TestNewExportsAllThreeSignals(t *testing.T) {
 	logs := &memLogExporter{}
 
 	tel, err := telemetry.New(ctx,
-		telemetry.Config{ServiceName: "ledger", Version: "test", Environment: "test"},
+		telemetry.Config{ServiceName: "ledger", Version: "test", Environment: "test", InstanceID: "replica-1"},
 		telemetry.WithSpanExporter(spans), telemetry.WithMetricReader(reader), telemetry.WithLogExporter(logs))
 	if err != nil {
 		t.Fatal(err)
@@ -54,14 +54,15 @@ func TestNewExportsAllThreeSignals(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("spans exportados = %d, esperado 1", len(got))
 	}
-	var service string
+	attrs := map[string]string{}
 	for _, a := range got[0].Resource.Attributes() {
-		if a.Key == "service.name" {
-			service = a.Value.AsString()
-		}
+		attrs[string(a.Key)] = a.Value.AsString()
 	}
-	if service != "ledger" {
-		t.Errorf("service.name = %q", service)
+	if attrs["service.name"] != "ledger" {
+		t.Errorf("service.name = %q", attrs["service.name"])
+	}
+	if attrs["service.instance.id"] != "replica-1" {
+		t.Errorf("service.instance.id = %q; réplicas precisam se distinguir", attrs["service.instance.id"])
 	}
 
 	logs.mu.Lock()

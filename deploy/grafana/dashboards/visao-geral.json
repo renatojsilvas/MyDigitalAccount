@@ -1,0 +1,186 @@
+{
+  "uid": "conta-visao-geral",
+  "title": "Conta Digital: visão geral (Fase 0)",
+  "description": "RED do BFF, a dependência ledger vista pelo BFF, RED do ledger, recursos (USE), logs e traces. Provisionado como código: edite o JSON, não a interface.",
+  "tags": ["conta-digital", "fase-0"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1, "type": "row", "title": "Stack de observabilidade", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Componentes (up)",
+      "description": "Resultado do scrape do Prometheus em cada peça da própria stack.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 1 },
+      "targets": [
+        { "refId": "A", "expr": "up{job=~\"prometheus|otel-collector|tempo|loki|grafana\"}", "legendFormat": "{{job}}", "instant": true }
+      ],
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "id": 10, "type": "row", "title": "BFF: requisições (RED)", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Taxa de requisições por rota e status",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{job=\"bff\"}[$__rate_interval]))", "legendFormat": "{{http_route}} {{http_response_status_code}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Erros 5xx (% das requisições)",
+      "description": "Erro de cliente (4xx) não conta: o SLO de disponibilidade olha só 5xx.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "100 * (sum(rate(http_server_request_duration_seconds_count{job=\"bff\",http_response_status_code=~\"5..\"}[$__rate_interval])) or vector(0)) / sum(rate(http_server_request_duration_seconds_count{job=\"bff\"}[$__rate_interval]))", "legendFormat": "5xx" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Latência das requisições (p50, p95, p99)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"bff\"}[$__rate_interval])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"bff\"}[$__rate_interval])))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"bff\"}[$__rate_interval])))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 5 } }, "overrides": [] }
+    },
+
+    {
+      "id": 20, "type": "row", "title": "Dependência: ledger, visto pelo BFF", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "Chamadas por status gRPC",
+      "description": "0 = OK, 3 = INVALID_ARGUMENT (erro do cliente), 4 = DEADLINE_EXCEEDED, 14 = UNAVAILABLE.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (rpc_grpc_status_code) (rate(rpc_client_duration_seconds_count{job=\"bff\",dependency=\"ledger\"}[$__rate_interval]))", "legendFormat": "status {{rpc_grpc_status_code}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "Latência p99 do ledger (cliente)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, rpc_method) (rate(rpc_client_duration_seconds_bucket{job=\"bff\",dependency=\"ledger\"}[$__rate_interval])))", "legendFormat": "{{rpc_method}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 5 } }, "overrides": [] }
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "Falhas da dependência (% das chamadas)",
+      "description": "Falha = tudo que não é OK nem INVALID_ARGUMENT (esse é erro do pedido, não da dependência).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
+      "targets": [
+        { "refId": "A", "expr": "100 * (sum(rate(rpc_client_duration_seconds_count{job=\"bff\",dependency=\"ledger\",rpc_grpc_status_code!~\"0|3\"}[$__rate_interval])) or vector(0)) / sum(rate(rpc_client_duration_seconds_count{job=\"bff\",dependency=\"ledger\"}[$__rate_interval]))", "legendFormat": "ledger" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+
+    {
+      "id": 30, "type": "row", "title": "ledger: servidor gRPC (RED)", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }
+    },
+    {
+      "id": 31, "type": "timeseries", "title": "Chamadas por método e status",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (rpc_method, rpc_response_status_code) (rate(rpc_server_call_duration_seconds_count{job=\"ledger\"}[$__rate_interval]))", "legendFormat": "{{rpc_method}} {{rpc_response_status_code}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 32, "type": "timeseries", "title": "Latência p99 por método",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, rpc_method) (rate(rpc_server_call_duration_seconds_bucket{job=\"ledger\"}[$__rate_interval])))", "legendFormat": "{{rpc_method}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 5 } }, "overrides": [] }
+    },
+
+    {
+      "id": 40, "type": "row", "title": "Recursos (USE)", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+    },
+    {
+      "id": 41, "type": "timeseries", "title": "BFF: atraso do event loop (p99)",
+      "description": "Saturação do Node. Base do load shedding da fase 6.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 33 },
+      "targets": [{ "refId": "A", "expr": "nodejs_eventloop_delay_p99_seconds{job=\"bff\"}", "legendFormat": "{{instance}}" }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 42, "type": "timeseries", "title": "BFF: heap em uso",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 33 },
+      "targets": [{ "refId": "A", "expr": "nodejs_heap_used_bytes{job=\"bff\"}", "legendFormat": "{{instance}}" }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 43, "type": "timeseries", "title": "ledger: goroutines",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 33 },
+      "targets": [{ "refId": "A", "expr": "go_goroutine_count{job=\"ledger\"}", "legendFormat": "{{instance}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 44, "type": "timeseries", "title": "ledger: memória do runtime Go",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 33 },
+      "targets": [{ "refId": "A", "expr": "sum by (go_memory_type) (go_memory_used_bytes{job=\"ledger\"})", "legendFormat": "{{go_memory_type}}" }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "lineWidth": 1, "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] }
+    },
+
+    {
+      "id": 50, "type": "row", "title": "Logs e traces", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }
+    },
+    {
+      "id": 51, "type": "logs", "title": "Logs dos serviços",
+      "description": "O campo trace_id vira link para o trace no Tempo.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 41 },
+      "targets": [{ "refId": "A", "expr": "{service_name=~\"bff|ledger\"}", "queryType": "range" }],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending", "enableLogDetails": true }
+    },
+    {
+      "id": 52, "type": "table", "title": "Traces recentes",
+      "description": "Clique no ID para abrir o trace (BFF e ledger no mesmo trace).",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 41 },
+      "targets": [
+        { "refId": "A", "queryType": "traceql", "query": "{ resource.service.name = \"bff\" && name =~ \"GET.*\" }", "limit": 20, "tableType": "traces" }
+      ]
+    }
+  ]
+}

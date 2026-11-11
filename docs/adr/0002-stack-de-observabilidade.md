@@ -58,6 +58,14 @@ serviços ──OTLP──> Collector ──> Prometheus (métricas)
 - **Ligações entre sinais**: o Tempo leva do span aos logs (consulta por `trace_id` em metadado estruturado) e às métricas; o Loki leva do `trace_id` ao Tempo. As consultas estão provisionadas; o salto de ponta a ponta com dados reais é validado no passo 9.
 - **Verificação**: `deploy/obs/smoke.sh` (`docker compose run --rm tools make obs-smoke`) envia um trace, uma métrica e um log por OTLP e confere a chegada em Tempo, Prometheus e Loki e a saúde dos três datasources.
 
+### Os serviços ligados à stack, decidido no passo 9
+
+- **A exportação é opt-in**: os serviços só exportam se `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317` estiver definido (no `.env` ou na linha de comando). Com ele definido e sem o Collector no ar, o export falha com uma linha de erro por lote; por isso o padrão é desligado, e o stdout em JSON continua sendo a reserva.
+- **`service.instance.id`** (hostname do contêiner) em todo recurso. No Prometheus, o Collector o transforma no rótulo `instance`; sem ele, duas réplicas escreveriam séries idênticas (a Fase 7 escala réplicas). Há teste nos dois serviços.
+- **Os nomes das métricas chegam diferentes por serviço**, porque cada SDK segue uma versão da convenção semântica: o BFF produz `rpc_grpc_status_code` numérico (`"3"`), enquanto o `otelgrpc` do ledger produz `rpc_response_status_code` por nome (`"INVALID_ARGUMENT"`). O dashboard trata cada um no seu lado. Unificar fica como pendência, de preferência quando o `otelgrpc` e o BFF convergirem na mesma versão da convenção.
+- **Dashboard inicial** (`deploy/grafana/dashboards/visao-geral.json`): stack de observabilidade, RED do BFF, dependência ledger vista pelo BFF, RED do ledger, recursos (USE), logs e traces. Todas as 15 consultas PromQL foram executadas contra o Prometheus com dados reais antes de fechar o passo. A conferência **visual** no navegador não foi feita na sessão (a extensão do Chrome não estava conectada).
+- **Critério de pronto verificável por comando**: `deploy/obs/e2e-trace.sh` (`make obs-e2e`) manda um `traceparent` conhecido ao BFF e confere no Tempo que há um único trace com `bff (servidor) -> bff (cliente gRPC) -> ledger (servidor)` encadeados, e no Loki que os dois serviços logaram com o mesmo `trace_id`. Foi verificado nos dois sentidos: falha, com instrução, sem exportação; passa com ela.
+
 ## Alternativas consideradas
 
 | Alternativa | Por que não |

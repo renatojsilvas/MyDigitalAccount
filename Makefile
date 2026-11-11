@@ -2,12 +2,18 @@
 #   docker compose run --rm tools make <alvo>
 # Subir, parar e apagar o ambiente são comandos do docker compose (ver README).
 
-.PHONY: generate proto-lint go-lint go-test ts-lint ts-test vuln obs-smoke lint test
+.PHONY: generate clean-gen proto-lint go-lint go-test ts-lint ts-test vuln obs-smoke obs-e2e lint test
 
-# Recria gen/ do zero a partir de proto/ (ADR-0001). Os modelos de gen/ vêm de
-# tools/templates; o package.json de gen/ts precisa existir antes do pnpm install.
+# Gera gen/ a partir de proto/ (ADR-0001), SOBRESCREVENDO os arquivos no lugar. Os modelos de
+# gen/ vêm de tools/templates; o package.json de gen/ts precisa existir antes do pnpm install.
+#
+# Não apaga gen/ de propósito: com o ambiente de desenvolvimento no ar, o tsx (BFF) e o air
+# (ledger) observam esses diretórios. Se eles forem apagados e recriados, os monitores perdem o
+# diretório, os serviços caem por faltar o código gerado e não voltam. Sobrescrever gera
+# eventos de escrita comuns e os dois se recompilam sozinhos. Para uma geração do zero (por
+# exemplo, depois de remover um .proto), use `make clean-gen generate`. O CI parte de um
+# checkout limpo, então já é do zero.
 generate:
-	rm -rf gen
 	mkdir -p gen/go gen/ts/src
 	cp tools/templates/gen-go.mod gen/go/go.mod
 	cp tools/templates/gen-ts-package.json gen/ts/package.json
@@ -16,6 +22,10 @@ generate:
 	buf generate
 	cd gen/go && go mod tidy && go build ./...
 	pnpm --filter @conta/contracts build
+
+# Apaga o código gerado. Pare os serviços de desenvolvimento antes, ou reinicie-os depois.
+clean-gen:
+	rm -rf gen
 
 proto-lint:
 	buf lint
@@ -43,6 +53,11 @@ ts-test:
 # no ar; por isso não faz parte de `make test`.
 obs-smoke:
 	sh deploy/obs/smoke.sh
+
+# Critério de pronto da Fase 0: um /ping do BFF ao ledger é um único trace, ligado aos logs.
+# Exige core e obs no ar, com os serviços exportando para o Collector.
+obs-e2e:
+	sh deploy/obs/e2e-trace.sh
 
 # Vulnerabilidades conhecidas nas dependências (consulta o banco vuln.go.dev).
 vuln:

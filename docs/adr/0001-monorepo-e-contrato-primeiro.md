@@ -29,7 +29,7 @@ Precisamos decidir (1) onde mora o código e (2) de onde nascem os tipos que cru
 
 ### 3. Código gerado não é versionado
 
-O código gerado vai para `gen/` (ignorado pelo Git). `make generate` o recria e `lint` e `test` dependem dele. O CI regenera do zero. `gen/` é **excluído do golangci-lint e do ESLint**: não se faz lint de código que não escrevemos, e a correção dele vem do gerador e do `buf lint` sobre o `.proto`.
+O código gerado vai para `gen/` (ignorado pelo Git). `make generate` o gera **sobrescrevendo os arquivos no lugar** e `lint` e `test` dependem dele. O CI parte de um checkout limpo, então gera do zero; localmente, `make clean-gen generate` limpa antes (por exemplo, depois de remover um `.proto`). Não apagar `gen/` a cada geração foi uma decisão do passo 9: com o ambiente de desenvolvimento no ar, o `tsx` (BFF) e o `air` (ledger) observam esses diretórios, e apagá-los e recriá-los os derrubava e eles não voltavam (o monitor perde o diretório recriado). Sobrescrever gera eventos de escrita comuns, e os dois se recompilam sozinhos em poucos segundos. `gen/` é **excluído do golangci-lint e do ESLint**: não se faz lint de código que não escrevemos, e a correção dele vem do gerador e do `buf lint` sobre o `.proto`.
 
 ### 4. Cliente gRPC em TypeScript: Connect (`protobuf-es`)
 

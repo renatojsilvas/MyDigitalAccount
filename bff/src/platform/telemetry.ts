@@ -26,6 +26,8 @@ export interface TelemetryConfig {
   readonly serviceName: string;
   readonly version: string;
   readonly environment: string;
+  /** Distingue réplicas do mesmo serviço (service.instance.id); em contêiner, o hostname é único. */
+  readonly instanceId: string;
   /** Ausente: os providers existem, mas nada é exportado. */
   readonly otlpEndpoint: string | undefined;
 }
@@ -60,6 +62,7 @@ export function createTelemetry(
     "service.name": cfg.serviceName,
     "service.version": cfg.version,
     "deployment.environment.name": cfg.environment,
+    "service.instance.id": cfg.instanceId,
   });
   const url = cfg.otlpEndpoint;
 

@@ -63,6 +63,7 @@ export function createHarness(
   const ledgerRequests: Harness["ledgerRequests"] = [];
 
   const built = buildApp(config, {
+    instanceId: "bff-test-1",
     telemetry: { spanExporter: spans, metricReader: reader, logExporter: logs },
     stdout: { write: (line: string) => void lines.push(line) },
     ...(options.realTransport
