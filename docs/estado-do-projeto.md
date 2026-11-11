@@ -16,7 +16,7 @@ Referências: `docs/plano-conta-digital.md` (plano), `docs/arquitetura-conta-dig
 `docker compose run --rm tools make lint test` passa nas duas stacks (código 0, 78 s com cache de imagens), e
 `docker compose run --rm tools make obs-e2e` prova que um `/ping` do BFF ao ledger é **um único trace**
 (`bff servidor -> bff cliente gRPC -> ledger servidor`), com logs dos dois serviços ligados ao mesmo
-`trace_id`. **Não verificado**: a conferência visual do dashboard no navegador (ver pendências).
+`trace_id`. O dashboard no Grafana foi conferido visualmente pelo usuário, que confirmou que ele funciona.
 
 ## 2. O que existe
 
@@ -147,7 +147,6 @@ As sondas de saúde ficam fora dos traces e das métricas de negócio. **Logs**:
 ## 8. Pendências e dívidas conhecidas
 
 **Para você fechar**
-- Conferir visualmente o dashboard em `http://127.0.0.1:3000` e o salto log → trace (a extensão do Chrome não estava conectada na sessão). As 15 consultas PromQL foram executadas contra o Prometheus com dados reais.
 - O CI e o `.devcontainer` **nunca rodaram**: o CI foi validado com `actionlint` (e o `buf breaking` testado localmente nos dois sentidos), mas não há remoto no GitHub ainda; o devcontainer só teve o JSON validado.
 
 **Técnicas**
