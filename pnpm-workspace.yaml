@@ -3,6 +3,12 @@ packages:
   - web
   - gen/ts
 
+# Scripts de build de dependências ficam negados por padrão (cadeia de suprimentos).
+# esbuild usa binários por plataforma e protobufjs só tem postinstall opcional.
+allowBuilds:
+  esbuild: false
+  protobufjs: false
+
 # Versões compartilhadas. O gerador (protoc-gen-es) e o runtime (@bufbuild/protobuf)
 # precisam andar juntos; o typescript-eslint 8.x aceita typescript < 6.1.
 catalog:

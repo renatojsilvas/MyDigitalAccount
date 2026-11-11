@@ -37,6 +37,14 @@ serviços ──OTLP──> Collector ──> Prometheus (métricas)
 - **Cliente gRPC do BFF (Connect)**: a instrumentação HTTP do OpenTelemetry não cobre HTTP/2, então um interceptor próprio cria o span de cliente (atributos `rpc.*` e status gRPC), registra a métrica de latência e erro por dependência e injeta o `traceparent`.
 - Como cada sinal chega ao seu backend (por exemplo, métricas por `remote_write` do Collector para o Prometheus ou por scrape de um exporter do Collector; logs pelo endpoint OTLP do Loki) será **conferido na documentação das versões fixadas** antes de configurar, no passo da stack.
 
+### Instrumentação no BFF (Node), decidida no passo 5
+
+- **Sem auto-instrumentação e sem globais.** Os providers do OpenTelemetry são criados no composition root e o contexto de trace trafega de forma explícita pela requisição (`request.telemetry.context`), passando ao cliente gRPC por `contextValues`. A auto-instrumentação do Node (`--import`, monkey-patch de módulos) exigiria um contexto assíncrono global e contraria "sem singletons importados diretamente". O preço é escrever o span de servidor e o de cliente à mão (um plugin do Fastify e um interceptor do Connect), o que também ensina o mecanismo.
+- **Pacotes da geração 3.x do SDK** (`@opentelemetry/sdk-trace`, `sdk-metrics`, `sdk-logs` 3.1.1, exporters 0.301.1, `api` 1.10.0). O `sdk-trace-node` 2.x está deprecated e exige `api <1.10`; misturar gerações quebra os pares.
+- **Logs**: o `pino` escreve JSON no stdout e um stream próprio reenvia cada linha ao OpenTelemetry, com `trace_id` e `span_id` como contexto do registro.
+- **`/readyz` do BFF não consulta o ledger**: o BFF degrada de forma parcial (fase 2); tirá-lo do balanceador por causa de uma dependência seria pior que responder algo útil.
+- **Deadline**: `timeoutMs` do Connect vira o header `Grpc-Timeout` (verificado na rede em teste), que o servidor Go enxerga como prazo do contexto.
+
 ## Alternativas consideradas
 
 | Alternativa | Por que não |
