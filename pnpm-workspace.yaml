@@ -2,3 +2,10 @@ packages:
   - bff
   - web
   - gen/ts
+
+# Versões compartilhadas. O gerador (protoc-gen-es) e o runtime (@bufbuild/protobuf)
+# precisam andar juntos; o typescript-eslint 8.x aceita typescript < 6.1.
+catalog:
+  "@bufbuild/protobuf": 2.17.0
+  "@bufbuild/protoc-gen-es": 2.17.0
+  typescript: 6.0.3

@@ -65,7 +65,7 @@ ENV HOME=/cache/home \
     XDG_CACHE_HOME=/cache/xdg \
     npm_config_cache=/cache/npm \
     PNPM_HOME=/cache/pnpm \
-    npm_config_store_dir=/cache/pnpm-store \
+    pnpm_config_store_dir=/cache/pnpm-store \
     PATH=/cache/pnpm:$PATH
 
 WORKDIR /workspace

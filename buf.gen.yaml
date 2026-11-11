@@ -1,0 +1,17 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: conta.local/gen/go
+plugins:
+  # Plugins Go ficam na imagem tools; o de TypeScript vem do workspace pnpm (ADR-0001).
+  - local: protoc-gen-go
+    out: gen/go
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen/go
+    opt: paths=source_relative
+  - local: node_modules/.bin/protoc-gen-es
+    out: gen/ts/src
+    opt: target=ts
