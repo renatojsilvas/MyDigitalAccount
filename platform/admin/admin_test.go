@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"conta.local/ledger/internal/platform/admin"
+	"conta.local/platform/admin"
 )
 
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }

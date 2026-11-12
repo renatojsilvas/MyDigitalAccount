@@ -16,6 +16,16 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+  # Métricas do próprio Redis (memória usada, chaves descartadas por falta de memória, clientes),
+  # lidas pelo comando INFO. O descarte de chaves é o risco do volatile-lru sobre os contadores
+  # do antifraude (ADR-0008). Sem o Redis no ar (profile core desligado), só gera aviso no log.
+  redis:
+    endpoint: redis:6379
+    collection_interval: 10s
+    metrics:
+      # Opcional, desligada por padrão: o teto contra o qual a memória usada é comparada.
+      redis.maxmemory:
+        enabled: true
 
 processors:
   # Primeiro da cadeia: recusa dados antes de estourar a memória, em vez de ser morto por OOM.
@@ -44,7 +54,7 @@ service:
       processors: [memory_limiter, batch]
       exporters: [otlp_grpc/tempo]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp, redis]
       processors: [memory_limiter, batch]
       exporters: [prometheus_remote_write]
     logs:

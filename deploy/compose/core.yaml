@@ -35,8 +35,17 @@ services:
       TEST_POSTGRES_PORT: "5432"
       TEST_POSTGRES_USER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
       TEST_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      # Redis real e Toxiproxy para os testes de falha (ADR-0003), lidos por testkit/testredis
+      # e testkit/toxi. O teste fala com o Redis direto ou por um proxy que ele mesmo cria.
+      TEST_REDIS_ADDR: redis-test:6379
+      TEST_TOXIPROXY_URL: http://toxiproxy:8474
+      TEST_TOXIPROXY_HOST: toxiproxy
     depends_on:
       postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      toxiproxy:
         condition: service_healthy
 
   postgres-test:
@@ -57,6 +66,34 @@ services:
       timeout: 3s
       retries: 20
       start_period: 3s
+
+  # Redis dos testes: mesma imagem e mesma configuração de memória do redis do core, em memória
+  # e sem porta publicada. Cada teste isola as suas chaves por prefixo (testkit/testredis).
+  redis-test:
+    profiles: ["tools", "test"]
+    image: redis:8.8.4-alpine@sha256:1273af45b299d2b8b60d0e400d90aa6c2c5b1794f01d6a7ca60ff3ba6e65efb5
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru", "--save", "", "--appendonly", "no"]
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  # Toxiproxy (ADR-0003): proxy TCP controlado por API HTTP (:8474). O teste cria um proxy para
+  # a dependência (porta escolhida pelo Toxiproxy), conecta-se por ele e injeta a falha:
+  # derrubar o proxy (dependência fora do ar), latência, corte de banda ou de conexão. Assim o
+  # tools, que não controla o Docker, consegue simular a queda sem parar contêineres.
+  toxiproxy:
+    profiles: ["tools", "test"]
+    image: ghcr.io/shopify/toxiproxy:2.13.0@sha256:5d3dae09bc185dcc5ff6cf43abf6062a4a720aff0c4306a471e773acdcd107aa
+    # A imagem não tem shell: a sonda é o próprio cliente, que falha se a API não responder.
+    healthcheck:
+      test: ["CMD", "/toxiproxy-cli", "list"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
 
   postgres:
     profiles: ["core"]
@@ -80,6 +117,24 @@ services:
       timeout: 3s
       retries: 12
       start_period: 10s
+    restart: unless-stopped
+
+  # Redis do ambiente (seção 4.3 do plano, ADR-0008): uma instância, sem cluster. Não é fonte
+  # da verdade (regra 9): sem persistência (save "" e appendonly no) e, por isso, sem volume;
+  # reiniciar zera os contadores do antifraude, o que só degrada o score por até 1 h.
+  # maxmemory e política de descarte explícitos: toda chave tem TTL, e volatile-lru descarta
+  # as menos usadas quando a memória acaba (o risco sobre os contadores está no ADR-0008).
+  redis:
+    profiles: ["core"]
+    image: redis:8.8.4-alpine@sha256:1273af45b299d2b8b60d0e400d90aa6c2c5b1794f01d6a7ca60ff3ba6e65efb5
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     restart: unless-stopped
 
   ledger:
@@ -114,6 +169,38 @@ services:
       ledger-migrate:
         condition: service_completed_successfully
     # O healthcheck vem do HEALTHCHECK do Dockerfile (curl no alvo dev, subcomando no final).
+
+  # Antifraude (ADR-0008): score por contadores de velocidade no Redis, com falhas injetáveis.
+  antifraude:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/antifraude:dev
+    build:
+      context: .
+      dockerfile: services/antifraude/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: docker-image://conta-digital/tools:dev
+    working_dir: /workspace/services/antifraude
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ANTIFRAUDE_GRPC_ADDR: ":50061"
+      ANTIFRAUDE_ADMIN_ADDR: ":8082"
+      REDIS_ADDR: redis:6379
+      ANTIFRAUDE_REDIS_TIMEOUT: ${ANTIFRAUDE_REDIS_TIMEOUT:-50ms}
+      # Falhas injetadas no boot; em execução, troque pelo AntifraudeAdminService.SetFaults.
+      ANTIFRAUDE_FAULT_LATENCY: ${ANTIFRAUDE_FAULT_LATENCY:-0s}
+      ANTIFRAUDE_FAULT_ERROR_RATE: ${ANTIFRAUDE_FAULT_ERROR_RATE:-0}
+      ANTIFRAUDE_DEGRADED_MAX_AMOUNT_CENTS: ${ANTIFRAUDE_DEGRADED_MAX_AMOUNT_CENTS:-50000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports:
+      - "127.0.0.1:${ANTIFRAUDE_GRPC_HOST_PORT:-50061}:50061"
+    depends_on:
+      # service_started, não service_healthy: o antifraude funciona sem o Redis (degradado,
+      # ADR-0008); a dependência só ordena a subida.
+      redis:
+        condition: service_started
 
   # Job de migration: roda uma vez antes do ledger, com o papel dono do schema, e sai. O
   # ledger só sobe se ele terminar com sucesso. Mesma imagem de desenvolvimento do ledger.

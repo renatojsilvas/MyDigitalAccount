@@ -95,7 +95,10 @@ A mesma estratégia vale para Postgres (fase 0 em diante), Redis (fase 3) e Kafk
 
 ## Consequências
 
-- **Testes de falha das fases 3 e 4** (Redis e Kafka fora do ar, lentos ou com conexão cortada) usarão o **Toxiproxy como serviço do compose**: o teste se conecta à dependência por meio do proxy e injeta a falha pela API HTTP do Toxiproxy. É a consequência direta da opção B, já que o `tools` não controla o Docker e portanto não pode parar um contêiner. O Toxiproxy **só entra no compose na fase 3**; a fase 0 não o cria.
+- **Testes de falha das fases 3 e 4** (Redis e Kafka fora do ar, lentos ou com conexão cortada) usarão o **Toxiproxy como serviço do compose**: o teste se conecta à dependência por meio do proxy e injeta a falha pela API HTTP do Toxiproxy. É a consequência direta da opção B, já que o `tools` não controla o Docker e portanto não pode parar um contêiner. O Toxiproxy **só entra no compose na fase 3**; a fase 0 não o cria. **Atualização (Fase 3)**: o Toxiproxy (`ghcr.io/shopify/toxiproxy:2.13.0`, por digest) entrou nos
+  profiles `tools` e `test`, com o `redis-test`; o helper `testkit/toxi` cria um proxy por teste (porta escolhida pelo
+  Toxiproxy, então testes em paralelo não colidem) e injeta queda, volta e latência pela API HTTP, só com a biblioteca
+  padrão.
 - (+) Em uma máquina nova, só o Docker basta; `docker compose run --rm tools make lint test` é o comando único de verificação.
 - (+) Ambiente reproduzível entre máquina local e CI.
 - (−) Os volumes de cache e o bind mount tornam o desempenho de I/O no Docker Desktop (Mac) um ponto de atenção; se ficar lento, avaliamos otimizações.

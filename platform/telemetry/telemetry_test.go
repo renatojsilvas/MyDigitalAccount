@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"conta.local/ledger/internal/platform/telemetry"
+	"conta.local/platform/telemetry"
 )
 
 // memLogExporter guarda os registros de log exportados.

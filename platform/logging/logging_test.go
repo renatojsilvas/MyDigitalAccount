@@ -9,7 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
-	"conta.local/ledger/internal/platform/logging"
+	"conta.local/platform/logging"
 )
 
 func decode(t *testing.T, buf *bytes.Buffer) map[string]any {

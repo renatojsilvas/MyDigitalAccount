@@ -1,4 +1,4 @@
-package grpcapi_test
+package grpcserver_test
 
 import (
 	"bytes"
@@ -24,9 +24,9 @@ import (
 	"log/slog"
 
 	pingv1 "conta.local/gen/go/conta/ping/v1"
-	"conta.local/ledger/internal/grpcapi"
-	"conta.local/ledger/internal/platform/logging"
-	"conta.local/ledger/internal/platform/telemetry"
+	"conta.local/platform/grpcserver"
+	"conta.local/platform/logging"
+	"conta.local/platform/telemetry"
 )
 
 type harness struct {
@@ -60,10 +60,10 @@ func newHarness(t *testing.T, ping pingv1.PingServiceServer) *harness {
 	h.tel = tel
 	logger := logging.New(h.logs, slog.LevelDebug, nil)
 
-	srv := grpcapi.NewServer(grpcapi.ServerOptions{
+	srv := grpcserver.NewServer(grpcserver.ServerOptions{
 		Logger: logger, TracerProvider: tel.Tracer, MeterProvider: tel.Meter, Propagator: tel.Propagator,
 	})
-	grpcapi.RegisterPing(srv, ping)
+	grpcserver.RegisterPing(srv, ping)
 	hs := health.NewServer()
 	healthpb.RegisterHealthServer(srv, hs)
 
@@ -102,7 +102,7 @@ func TestPing(t *testing.T) {
 		{"no limite de 256 caracteres", strings.Repeat("a", 256), codes.OK},
 		{"acima do limite", strings.Repeat("a", 257), codes.InvalidArgument},
 	}
-	h := newHarness(t, grpcapi.NewPingHandler("ledger"))
+	h := newHarness(t, grpcserver.NewPingHandler("ledger"))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, err := h.client.Ping(t.Context(), &pingv1.PingRequest{Message: tt.message})
@@ -117,7 +117,7 @@ func TestPing(t *testing.T) {
 }
 
 func TestPingEmitsTraceLogAndMetric(t *testing.T) {
-	h := newHarness(t, grpcapi.NewPingHandler("ledger"))
+	h := newHarness(t, grpcserver.NewPingHandler("ledger"))
 	if _, err := h.client.Ping(t.Context(), &pingv1.PingRequest{Message: "x"}); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestPingEmitsTraceLogAndMetric(t *testing.T) {
 }
 
 func TestHealthCheckIsNotTraced(t *testing.T) {
-	h := newHarness(t, grpcapi.NewPingHandler("ledger"))
+	h := newHarness(t, grpcserver.NewPingHandler("ledger"))
 	resp, err := h.health.Check(t.Context(), &healthpb.HealthCheckRequest{})
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ func TestServeGracefulShutdown(t *testing.T) {
 	srv := grpc.NewServer()
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- grpcapi.Serve(ctx, srv, lis, time.Second) }()
+	go func() { done <- grpcserver.Serve(ctx, srv, lis, time.Second) }()
 
 	cancel()
 	select {

@@ -1,7 +1,7 @@
-// Package grpcapi é a borda gRPC do serviço: monta o servidor com seus interceptors,
-// traduz erros para status gRPC e implementa os handlers. É a única camada que conhece
-// códigos gRPC.
-package grpcapi
+// Package grpcserver monta o servidor gRPC comum a todos os serviços Go: tracing, métricas
+// RED, log de cada chamada e recuperação de panic, e o desligamento gracioso. A tradução de
+// erros de domínio é de cada serviço e entra como interceptor (ServerOptions.Interceptors).
+package grpcserver
 
 import (
 	"context"
@@ -32,6 +32,10 @@ type ServerOptions struct {
 	TracerProvider trace.TracerProvider
 	MeterProvider  metric.MeterProvider
 	Propagator     propagation.TextMapPropagator
+	// Interceptors do serviço (por exemplo, a tradução de erros de domínio para status). Rodam
+	// entre o log, por fora, e a recuperação de panic, por dentro: o log registra o código
+	// final, e um panic vira Internal antes de chegar a eles.
+	Interceptors []grpc.UnaryServerInterceptor
 }
 
 // NewServer cria o servidor gRPC com tracing, métricas RED, log e recuperação de panic.
@@ -50,12 +54,15 @@ func NewServer(o ServerOptions, extra ...grpc.ServerOption) *grpc.Server {
 				return !strings.HasPrefix(info.FullMethodName, healthServicePrefix)
 			}),
 		)),
-		// Logging por fora, tradução de erros no meio, recuperação por dentro: o panic vira
-		// erro Internal, os erros de domínio viram status, e o log da chamada registra o
-		// código final.
-		grpc.ChainUnaryInterceptor(loggingInterceptor(o.Logger), errorInterceptor(o.Logger), recoveryInterceptor(o.Logger)),
+		grpc.ChainUnaryInterceptor(chain(o)...),
 	}
 	return grpc.NewServer(append(opts, extra...)...)
+}
+
+func chain(o ServerOptions) []grpc.UnaryServerInterceptor {
+	c := []grpc.UnaryServerInterceptor{loggingInterceptor(o.Logger)}
+	c = append(c, o.Interceptors...)
+	return append(c, recoveryInterceptor(o.Logger))
 }
 
 func loggingInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {

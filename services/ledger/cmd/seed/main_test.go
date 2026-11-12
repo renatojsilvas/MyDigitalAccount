@@ -18,9 +18,10 @@ import (
 	ledgerv1 "conta.local/gen/go/conta/ledger/v1"
 	"conta.local/ledger/internal/account"
 	"conta.local/ledger/internal/grpcapi"
-	"conta.local/ledger/internal/platform/logging"
 	"conta.local/ledger/internal/platform/postgres/pgtest"
 	"conta.local/ledger/internal/postgres"
+	"conta.local/platform/grpcserver"
+	"conta.local/platform/logging"
 )
 
 // ledger sobe a pilha inteira (gRPC -> casos de uso -> Postgres de teste) numa porta TCP local
@@ -28,8 +29,10 @@ import (
 func ledger(t *testing.T) (ledgerv1.LedgerServiceClient, string) {
 	t.Helper()
 	_, pool := pgtest.Migrated(t, 0)
-	srv := grpcapi.NewServer(grpcapi.ServerOptions{
-		Logger:         logging.New(&bytes.Buffer{}, slog.LevelInfo, nil),
+	logger := logging.New(&bytes.Buffer{}, slog.LevelInfo, nil)
+	srv := grpcserver.NewServer(grpcserver.ServerOptions{
+		Logger:         logger,
+		Interceptors:   []grpc.UnaryServerInterceptor{grpcapi.ErrorInterceptor(logger)},
 		TracerProvider: tracenoop.NewTracerProvider(),
 		MeterProvider:  noop.NewMeterProvider(),
 		Propagator:     propagation.TraceContext{},

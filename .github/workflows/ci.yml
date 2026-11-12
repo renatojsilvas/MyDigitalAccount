@@ -58,6 +58,9 @@ jobs:
           docker build -f services/ledger/Dockerfile --target final \
             --build-context tools=docker-image://conta-digital/tools:dev \
             -t conta-digital/ledger:final .
+          docker build -f services/antifraude/Dockerfile --target final \
+            --build-context tools=docker-image://conta-digital/tools:dev \
+            -t conta-digital/antifraude:final .
           docker build -f bff/Dockerfile --target final \
             --build-context tools=docker-image://conta-digital/tools:dev \
             -t conta-digital/bff:final .

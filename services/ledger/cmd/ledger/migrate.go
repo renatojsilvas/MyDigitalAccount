@@ -5,9 +5,9 @@ import (
 	"io"
 
 	"conta.local/ledger/internal/platform/config"
-	"conta.local/ledger/internal/platform/logging"
 	"conta.local/ledger/internal/platform/postgres"
 	"conta.local/ledger/migrations"
+	"conta.local/platform/logging"
 )
 
 // runMigrate aplica as migrations e sai: é o job que roda antes do serviço, com o papel

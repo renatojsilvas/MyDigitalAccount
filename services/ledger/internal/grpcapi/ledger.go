@@ -24,7 +24,7 @@ type LedgerService interface {
 
 // LedgerHandler implementa conta.ledger.v1.LedgerService: converte o pedido em comando
 // validado, chama o caso de uso e converte o resultado. Os erros saem crus; o
-// errorInterceptor os traduz para status gRPC.
+// ErrorInterceptor os traduz para status gRPC.
 type LedgerHandler struct {
 	ledgerv1.UnimplementedLedgerServiceServer
 	svc LedgerService

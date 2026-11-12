@@ -100,6 +100,12 @@ nunca é exposto pelo BFF.
   instância) também será descartável por LRU.
 - **Sem persistência** (`save ""`, `appendonly no`): reiniciar o Redis zera os contadores, o que é uma degradação
   curta e aceitável. Persistir seria tratar o Redis como fonte da verdade.
+- **Sem volume nomeado**, desvio consciente da regra das instruções do projeto ("dados em volume nomeado"): sem
+  persistência não há dado em disco, e um volume vazio só daria a falsa impressão de que algo sobrevive a um
+  reinício. Bancos (Postgres) e o Kafka (Fase 4) continuam com volume.
+- O `/readyz` do antifraude **não** consulta o Redis: sem ele o serviço continua atendendo, degradado. Tirá-lo do
+  balanceador por causa do Redis transformaria degradação em indisponibilidade.
+- Testes: um `redis-test` (mesma imagem e configuração, em `tmpfs`) e o Toxiproxy, nos profiles `tools` e `test`.
 - Licença: o Redis 8 é distribuído sob AGPLv3 (entre outras opções). Para um projeto didático, local e sem
   distribuição, não há impacto. O Valkey é o *fork* compatível, caso isso mude.
 

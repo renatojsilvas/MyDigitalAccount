@@ -23,7 +23,7 @@ import (
 
 	ledgerv1 "conta.local/gen/go/conta/ledger/v1"
 	"conta.local/ledger/internal/account"
-	"conta.local/ledger/internal/platform/logging"
+	"conta.local/platform/logging"
 )
 
 // keyVersion entra em toda chave do seed. Mudou um saldo inicial no arquivo? Suba a versão:

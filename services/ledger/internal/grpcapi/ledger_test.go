@@ -26,9 +26,10 @@ import (
 	ledgerv1 "conta.local/gen/go/conta/ledger/v1"
 	"conta.local/ledger/internal/account"
 	"conta.local/ledger/internal/grpcapi"
-	"conta.local/ledger/internal/platform/logging"
 	"conta.local/ledger/internal/platform/postgres/pgtest"
 	"conta.local/ledger/internal/postgres"
+	"conta.local/platform/grpcserver"
+	"conta.local/platform/logging"
 )
 
 // ledgerClient sobe o servidor gRPC real (interceptors incluídos) sobre svc, em memória.
@@ -37,8 +38,10 @@ func ledgerClient(t *testing.T, svc grpcapi.LedgerService, logs *bytes.Buffer) l
 	if logs == nil {
 		logs = &bytes.Buffer{}
 	}
-	srv := grpcapi.NewServer(grpcapi.ServerOptions{
-		Logger:         logging.New(logs, slog.LevelDebug, nil),
+	logger := logging.New(logs, slog.LevelDebug, nil)
+	srv := grpcserver.NewServer(grpcserver.ServerOptions{
+		Logger:         logger,
+		Interceptors:   []grpc.UnaryServerInterceptor{grpcapi.ErrorInterceptor(logger)},
 		TracerProvider: tracenoop.NewTracerProvider(),
 		MeterProvider:  noop.NewMeterProvider(),
 		Propagator:     propagation.TraceContext{},

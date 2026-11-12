@@ -12,18 +12,20 @@ import (
 	"syscall"
 
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"conta.local/ledger/internal/account"
 	"conta.local/ledger/internal/accountotel"
 	"conta.local/ledger/internal/grpcapi"
-	"conta.local/ledger/internal/platform/admin"
 	"conta.local/ledger/internal/platform/config"
-	"conta.local/ledger/internal/platform/logging"
 	"conta.local/ledger/internal/platform/postgres"
-	"conta.local/ledger/internal/platform/telemetry"
 	ledgerpg "conta.local/ledger/internal/postgres"
+	"conta.local/platform/admin"
+	"conta.local/platform/grpcserver"
+	"conta.local/platform/logging"
+	"conta.local/platform/telemetry"
 )
 
 const serviceName = "ledger"
@@ -94,8 +96,9 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	defer pool.Close()
 
 	healthSrv := health.NewServer() // grpc.health.v1, para clientes e balanceadores gRPC
-	srv := grpcapi.NewServer(grpcapi.ServerOptions{
+	srv := grpcserver.NewServer(grpcserver.ServerOptions{
 		Logger: logger, TracerProvider: tel.Tracer, MeterProvider: tel.Meter, Propagator: tel.Propagator,
+		Interceptors: []grpc.UnaryServerInterceptor{grpcapi.ErrorInterceptor(logger)},
 	})
 	// Persistência -> casos de uso -> borda. O Codec da borda grava os resultados idempotentes
 	// no formato do contrato (ADR-0004, seção 3).
@@ -105,7 +108,7 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	}
 	ledger := account.NewService(ledgerpg.NewStore(pool), grpcapi.Codec{}, account.WithObserver(observer))
 	grpcapi.RegisterLedger(srv, grpcapi.NewLedgerHandler(ledger))
-	grpcapi.RegisterPing(srv, grpcapi.NewPingHandler(serviceName))
+	grpcserver.RegisterPing(srv, grpcserver.NewPingHandler(serviceName))
 	healthpb.RegisterHealthServer(srv, healthSrv)
 
 	// O /readyz depende do Postgres: sem banco o ledger não pode atender (o /healthz não depende).
@@ -118,7 +121,7 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		"otlp_export", cfg.OTLPEndpoint != "")
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return grpcapi.Serve(gctx, srv, grpcLis, cfg.ShutdownTimeout) })
+	g.Go(func() error { return grpcserver.Serve(gctx, srv, grpcLis, cfg.ShutdownTimeout) })
 	g.Go(func() error { return adminSrv.Serve(gctx, adminLis, cfg.ShutdownTimeout) })
 	g.Go(func() error {
 		// Ao receber o sinal, para de se anunciar como pronto antes de parar de servir.

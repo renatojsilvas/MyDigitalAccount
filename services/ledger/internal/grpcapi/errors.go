@@ -74,10 +74,10 @@ func withReason(code codes.Code, msg string, reason ledgerv1.ErrorReason, metada
 	return st
 }
 
-// errorInterceptor é o tratamento central de erros: os handlers devolvem erros de domínio e
+// ErrorInterceptor é o tratamento central de erros: os handlers devolvem erros de domínio e
 // ele os traduz para status gRPC. Erros inesperados viram "erro interno" para o cliente e são
 // registrados aqui, com a causa, no log ligado ao trace.
-func errorInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
+func ErrorInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		resp, err := handler(ctx, req)
 		if err == nil {

@@ -19,6 +19,7 @@ FROM tools AS build
 ARG VERSION=dev
 WORKDIR /workspace
 COPY gen/go gen/go
+COPY platform platform
 COPY services/ledger services/ledger
 WORKDIR /workspace/services/ledger
 # CGO desligado: binário estático, que roda em imagem sem libc. -trimpath e -s -w tiram caminhos

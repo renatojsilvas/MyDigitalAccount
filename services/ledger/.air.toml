@@ -6,9 +6,9 @@ tmp_dir = "tmp"
   cmd = "go build -o ./tmp/ledger ./cmd/ledger"
   bin = "./tmp/ledger"
   include_ext = ["go"]
-  # Também observa o código gerado do .proto (fora do diretório do serviço): ao regenerar,
-  # o ledger recompila sozinho.
-  include_dir = [".", "../../gen/go"]
+  # Também observa o código gerado do .proto e o módulo platform (fora do diretório do
+  # serviço): ao mudarem, o ledger recompila sozinho.
+  include_dir = [".", "../../gen/go", "../../platform"]
   exclude_dir = ["tmp"]
   exclude_regex = ["_test\\.go$"]
   delay = 500
