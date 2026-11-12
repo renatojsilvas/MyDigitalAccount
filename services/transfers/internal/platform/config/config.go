@@ -28,6 +28,25 @@ type Config struct {
 	DailyLimitCents int64
 	// RequestHashKey assina o pedido na tabela de idempotência (HMAC-SHA256). Segredo.
 	RequestHashKey []byte
+	Dependencies   Dependencies
+	Saga           Saga
+}
+
+// Dependencies são os endereços e prazos de cada chamada (ADR-0007, seção 7).
+type Dependencies struct {
+	AntifraudeAddr, LedgerAddr, SPIAddr string
+	AntifraudeTimeout, LedgerTimeout    time.Duration
+}
+
+// Saga são os parâmetros do runner e do timeout na liquidação (ADR-0007, seções 4 e 5).
+type Saga struct {
+	Workers                             int
+	PollInterval, LeaseTTL, RetryDelay  time.Duration
+	FanOutTimeout                       time.Duration
+	SettleTimeout                       time.Duration
+	SettleAttempts                      int
+	SettleBackoffBase, SettleBackoffMax time.Duration
+	ConfirmAfter                        time.Duration
 }
 
 // Database é o que o job de migration precisa: o banco e o nível de log.
@@ -51,6 +70,24 @@ func (r *reader) get(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// duration lê uma duração positiva.
+func (r *reader) duration(key, def string) time.Duration {
+	d, err := time.ParseDuration(r.get(key, def))
+	if err != nil || d <= 0 {
+		r.fail("%s deve ser uma duração positiva", key)
+	}
+	return d
+}
+
+// count lê um inteiro entre lo e hi.
+func (r *reader) count(key string, def, lo, hi int) int {
+	n, err := strconv.Atoi(r.get(key, strconv.Itoa(def)))
+	if err != nil || n < lo || n > hi {
+		r.fail("%s deve ser um inteiro entre %d e %d", key, lo, hi)
+	}
+	return n
 }
 
 func (r *reader) fail(format string, args ...any) {
@@ -122,6 +159,31 @@ func Load(lookup Lookup) (Config, error) {
 		r.fail("TRANSFERS_DAILY_LIMIT_CENTS deve ser um inteiro positivo (centavos)")
 	}
 	cfg.DailyLimitCents = limit
+	cfg.Dependencies = Dependencies{
+		AntifraudeAddr:    r.get("TRANSFERS_ANTIFRAUDE_ADDR", "antifraude:50061"),
+		LedgerAddr:        r.get("TRANSFERS_LEDGER_ADDR", "ledger:50051"),
+		SPIAddr:           r.get("TRANSFERS_SPI_ADDR", "spi-fake:50071"),
+		AntifraudeTimeout: r.duration("TRANSFERS_ANTIFRAUDE_TIMEOUT", "300ms"),
+		LedgerTimeout:     r.duration("TRANSFERS_LEDGER_TIMEOUT", "500ms"),
+	}
+	cfg.Saga = Saga{
+		Workers:           r.count("TRANSFERS_RUNNER_WORKERS", 8, 1, 256),
+		PollInterval:      r.duration("TRANSFERS_RUNNER_POLL_INTERVAL", "500ms"),
+		LeaseTTL:          r.duration("TRANSFERS_LEASE_TTL", "30s"),
+		RetryDelay:        r.duration("TRANSFERS_RETRY_DELAY", "2s"),
+		FanOutTimeout:     r.duration("TRANSFERS_FANOUT_TIMEOUT", "1s"),
+		SettleTimeout:     r.duration("TRANSFERS_SPI_SETTLE_TIMEOUT", "1s"),
+		SettleAttempts:    r.count("TRANSFERS_SPI_SETTLE_ATTEMPTS", 3, 1, 10),
+		SettleBackoffBase: r.duration("TRANSFERS_SPI_SETTLE_BACKOFF_BASE", "200ms"),
+		SettleBackoffMax:  r.duration("TRANSFERS_SPI_SETTLE_BACKOFF_MAX", "1s"),
+		ConfirmAfter:      r.duration("TRANSFERS_CONFIRM_INTERVAL_BASE", "2s"),
+	}
+	// O lease precisa cobrir a etapa mais longa (as tentativas de liquidação), senão outro
+	// runner a tomaria no meio: o fencing token barraria a escrita, mas o trabalho se repetiria.
+	worst := time.Duration(cfg.Saga.SettleAttempts) * (cfg.Saga.SettleTimeout + cfg.Saga.SettleBackoffMax)
+	if cfg.Saga.LeaseTTL <= 2*worst {
+		r.fail("TRANSFERS_LEASE_TTL (%v) deve passar do dobro do pior caso da liquidação (%v)", cfg.Saga.LeaseTTL, worst)
+	}
 	cfg.RequestHashKey = []byte(r.get("TRANSFERS_REQUEST_HASH_KEY", ""))
 	if len(cfg.RequestHashKey) < minHashKeyBytes {
 		r.fail("TRANSFERS_REQUEST_HASH_KEY é obrigatória, com pelo menos %d bytes", minHashKeyBytes)

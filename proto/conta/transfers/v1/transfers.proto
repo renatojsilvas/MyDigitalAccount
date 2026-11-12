@@ -112,6 +112,8 @@ enum PixReason {
   PIX_REASON_SETTLEMENT_REJECTED = 7;
   // Comprovadamente nenhuma tentativa de liquidação saiu (ADR-0007, seção 5).
   PIX_REASON_SETTLEMENT_NOT_SENT = 8;
+  // Recusa (estado REJECTED): o ledger não reconhece a conta de origem.
+  PIX_REASON_SOURCE_ACCOUNT_INVALID = 9;
 }
 
 message PixStateChange {

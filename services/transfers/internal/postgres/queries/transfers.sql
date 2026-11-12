@@ -86,3 +86,38 @@ SET state = @to_state,
     next_run_at = @next_run_at,
     updated_at = @updated_at
 WHERE id = @id AND state = @from_state AND lease_token = @lease_token;
+
+-- name: ClaimDue :many
+-- Fila sobre o Postgres (ADR-0007, seção 4): pega até max_jobs transferências vencidas nos
+-- estados pedidos, cujo lease está livre ou expirado. SKIP LOCKED deixa várias instâncias
+-- pegarem trabalho ao mesmo tempo sem disputar a mesma linha; o token cresce a cada tomada.
+WITH due AS (
+    SELECT id FROM transfers
+    WHERE state = ANY(@states::text[])
+      AND next_run_at <= now()
+      AND (lease_until IS NULL OR lease_until < now())
+    ORDER BY next_run_at
+    LIMIT @max_jobs
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE transfers t
+SET lease_owner = @owner, lease_until = now() + @ttl::interval, lease_token = t.lease_token + 1
+FROM due
+WHERE t.id = due.id
+RETURNING t.id, t.source_account_id, t.destination_key_type, t.destination_key, t.destination_account_id,
+          t.amount_cents, t.description, t.state, t.reason, t.settlement_id, t.debit_entry_id, t.limit_day,
+          t.limit_reserved, t.settlement_maybe_sent, t.confirmation_overdue, t.trace_carrier, t.created_at,
+          t.updated_at, t.lease_token;
+
+-- name: RenewLease :execrows
+UPDATE transfers SET lease_until = now() + @ttl::interval
+WHERE id = @id AND lease_token = @lease_token;
+
+-- name: ReleaseLease :execrows
+-- Solta o lease (o token fica: só cresce) e agenda a próxima rodada.
+UPDATE transfers SET lease_owner = NULL, lease_until = NULL, next_run_at = @next_run_at
+WHERE id = @id AND lease_token = @lease_token;
+
+-- name: MarkMaybeSent :execrows
+UPDATE transfers SET settlement_maybe_sent = true, updated_at = @updated_at
+WHERE id = @id AND lease_token = @lease_token;

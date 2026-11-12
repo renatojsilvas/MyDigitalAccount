@@ -152,3 +152,15 @@ func TestNewLimitsNeverNegative(t *testing.T) {
 		t.Fatalf("disponível = %d, want 0", l.AvailableCents)
 	}
 }
+
+// Todo motivo é recusa ou estorno, nunca os dois; e todo motivo tem nome (vai para o banco).
+func TestEveryReasonIsRejectionXorReversal(t *testing.T) {
+	for r := pix.ReasonAntifraudDenied; r <= pix.ReasonSourceAccountInvalid; r++ {
+		if r.IsRejection() == r.IsReversal() {
+			t.Errorf("%d (%q): recusa=%v estorno=%v", r, r, r.IsRejection(), r.IsReversal())
+		}
+		if got, err := pix.ParseReason(r.String()); err != nil || got != r || r.String() == "" {
+			t.Errorf("ParseReason(%q) = %v, %v", r, got, err)
+		}
+	}
+}

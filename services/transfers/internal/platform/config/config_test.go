@@ -49,3 +49,24 @@ func TestInvalidListsEveryError(t *testing.T) {
 		}
 	}
 }
+
+func TestSagaDefaultsFollowADR0007(t *testing.T) {
+	cfg, err := config.Load(env(valid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, d := cfg.Saga, cfg.Dependencies
+	if s.SettleAttempts != 3 || s.SettleTimeout.String() != "1s" || s.SettleBackoffBase.String() != "200ms" ||
+		s.SettleBackoffMax.String() != "1s" || s.ConfirmAfter.String() != "2s" || s.LeaseTTL.String() != "30s" ||
+		d.AntifraudeTimeout.String() != "300ms" || d.LedgerTimeout.String() != "500ms" || s.FanOutTimeout.String() != "1s" {
+		t.Fatalf("saga = %+v, dependências = %+v", s, d)
+	}
+}
+
+func TestLeaseMustCoverTheSettlementStep(t *testing.T) {
+	m := valid()
+	m["TRANSFERS_LEASE_TTL"] = "5s" // 3 x (1s + 1s) = 6s; o lease precisa passar de 12s
+	if _, err := config.Load(env(m)); err == nil || !strings.Contains(err.Error(), "TRANSFERS_LEASE_TTL") {
+		t.Fatalf("lease curto aceito: %v", err)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go.opentelemetry.io/otel/propagation"
 	"golang.org/x/sync/errgroup"
@@ -17,17 +18,25 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
+	antifraudev1 "conta.local/gen/go/conta/antifraude/v1"
+	ledgerv1 "conta.local/gen/go/conta/ledger/v1"
+	spiv1 "conta.local/gen/go/conta/spi/v1"
 	"conta.local/platform/admin"
+	"conta.local/platform/grpcclient"
 	"conta.local/platform/grpcserver"
 	"conta.local/platform/healthcheck"
 	"conta.local/platform/logging"
 	"conta.local/platform/pg"
 	"conta.local/platform/telemetry"
+	"conta.local/transfers/internal/clients"
 	"conta.local/transfers/internal/grpcapi"
 	"conta.local/transfers/internal/pix"
 	"conta.local/transfers/internal/pixotel"
 	"conta.local/transfers/internal/platform/config"
 	transferspg "conta.local/transfers/internal/postgres"
+	"conta.local/transfers/internal/resilience"
+	"conta.local/transfers/internal/saga"
+	"conta.local/transfers/internal/sagaotel"
 	"conta.local/transfers/migrations"
 )
 
@@ -126,7 +135,49 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("métricas de negócio: %w", err)
 	}
-	svc := pix.NewService(transferspg.NewStore(pool), cal, cfg.RequestHashKey, cfg.DailyLimitCents, pix.WithObserver(observer))
+	store := transferspg.NewStore(pool)
+
+	// Clientes das dependências: cada um com o seu circuito e a sua política de retry.
+	telSaga, err := sagaotel.New(tel.Tracer, tel.Meter, tel.Propagator, "antifraude", "ledger", "spi")
+	if err != nil {
+		return fmt.Errorf("métricas da saga: %w", err)
+	}
+	connOpts := grpcclient.Options{TracerProvider: tel.Tracer, MeterProvider: tel.Meter, Propagator: tel.Propagator}
+	conns := map[string]*grpc.ClientConn{}
+	for name, addr := range map[string]string{
+		"antifraude": cfg.Dependencies.AntifraudeAddr, "ledger": cfg.Dependencies.LedgerAddr, "spi": cfg.Dependencies.SPIAddr,
+	} {
+		conn, err := grpcclient.Dial(addr, connOpts)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = conn.Close() }()
+		conns[name] = conn
+	}
+	breaker := resilience.DefaultBreaker()
+	quick := func(timeout time.Duration) resilience.Policy {
+		return resilience.Policy{Attempts: 3, Base: 50 * time.Millisecond, Max: 300 * time.Millisecond, Timeout: timeout}
+	}
+	runner := saga.NewRunner(saga.Config{
+		Owner: hostname, LeaseTTL: cfg.Saga.LeaseTTL, Workers: cfg.Saga.Workers, PollInterval: cfg.Saga.PollInterval,
+		RetryDelay: cfg.Saga.RetryDelay, DailyLimitCents: cfg.DailyLimitCents, FanOutTimeout: cfg.Saga.FanOutTimeout,
+		SettleAttempts: cfg.Saga.SettleAttempts,
+		SettleBackoff: resilience.Policy{
+			Base: cfg.Saga.SettleBackoffBase, Max: cfg.Saga.SettleBackoffMax, Timeout: cfg.Saga.SettleTimeout,
+		},
+		ConfirmAfter: cfg.Saga.ConfirmAfter,
+	}, saga.Deps{
+		Store: store,
+		Antifraud: clients.NewAntifraude(antifraudev1.NewAntifraudeServiceClient(conns["antifraude"]),
+			clients.NewDependency("antifraude", breaker, quick(cfg.Dependencies.AntifraudeTimeout), telSaga)),
+		Ledger: clients.NewLedger(ledgerv1.NewLedgerServiceClient(conns["ledger"]),
+			clients.NewDependency("ledger", breaker, quick(cfg.Dependencies.LedgerTimeout), telSaga)),
+		SPI: clients.NewSPI(spiv1.NewSpiServiceClient(conns["spi"]),
+			clients.NewDependency("spi", breaker, resilience.Policy{Attempts: 1}, telSaga)),
+		Tracing: telSaga, Observer: telSaga, Logger: logger,
+	})
+	svc := pix.NewService(store, cal, cfg.RequestHashKey, cfg.DailyLimitCents,
+		pix.WithObserver(observer), pix.WithNotify(runner.Notify))
 
 	// O contexto de trace do aceite é gravado na transferência (ADR-0007, seção 4).
 	carrier := func(ctx context.Context) map[string]string {
@@ -151,11 +202,15 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		"version", version, "environment", cfg.Environment,
 		"grpc_addr", grpcLis.Addr().String(), "admin_addr", adminLis.Addr().String(),
 		"postgres_host", cfg.Postgres.Host, "postgres_db", cfg.Postgres.Database,
-		"daily_limit_cents", cfg.DailyLimitCents, "otlp_export", cfg.OTLPEndpoint != "")
+		"daily_limit_cents", cfg.DailyLimitCents, "runner_workers", cfg.Saga.Workers,
+		"antifraude", cfg.Dependencies.AntifraudeAddr, "ledger", cfg.Dependencies.LedgerAddr, "spi", cfg.Dependencies.SPIAddr,
+		"otlp_export", cfg.OTLPEndpoint != "")
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { return grpcserver.Serve(gctx, srv, grpcLis, cfg.ShutdownTimeout) })
 	g.Go(func() error { return adminSrv.Serve(gctx, adminLis, cfg.ShutdownTimeout) })
+	// O runner da saga: para de pegar trabalho no sinal e espera as etapas em andamento.
+	g.Go(func() error { return runner.Run(gctx) })
 	g.Go(func() error {
 		<-gctx.Done()
 		adminSrv.SetReady(false)

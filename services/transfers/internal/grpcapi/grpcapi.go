@@ -126,6 +126,7 @@ var reasons = map[pix.Reason]transfersv1.PixReason{
 	pix.ReasonDependencyUnavailable: transfersv1.PixReason_PIX_REASON_DEPENDENCY_UNAVAILABLE,
 	pix.ReasonSettlementRejected:    transfersv1.PixReason_PIX_REASON_SETTLEMENT_REJECTED,
 	pix.ReasonSettlementNotSent:     transfersv1.PixReason_PIX_REASON_SETTLEMENT_NOT_SENT,
+	pix.ReasonSourceAccountInvalid:  transfersv1.PixReason_PIX_REASON_SOURCE_ACCOUNT_INVALID,
 }
 
 func idOrEmpty(id uuid.UUID) string {

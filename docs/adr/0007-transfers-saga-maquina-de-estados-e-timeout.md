@@ -289,6 +289,20 @@ Num Pix terminado (`COMPLETED` ou `REVERSED`), a `settlement` fecha em zero para
   (`time/tzdata`): a imagem final é distroless, e sem ela o dia do limite em `America/Sao_Paulo` falharia só em
   produção. O papel `transfers_app` só pode atualizar as colunas da saga; valor, origem, destino informado,
   `settlement_id` e o dia do limite são imutáveis também por privilégio.
+- **Implementação (passo 7)**:
+  - Motivo de recusa novo, `SOURCE_ACCOUNT_INVALID`: o débito pode voltar `ACCOUNT_NOT_FOUND` (conta de origem
+    inexistente), e nenhum motivo descrevia isso. Aditivo no contrato; a migration `00002` amplia o `CHECK`.
+  - "Não enviado" com prova usa o modo de dois passos do `gobreaker/v2`: o circuito autoriza, o runner grava
+    `settlement_maybe_sent` e só então a chamada sai. Circuito recusado, ou marcador que não pôde ser gravado, não
+    enviam nada. Por construção, **marcador falso prova que nenhuma tentativa saiu**, e é o que decide o estorno.
+  - `ENTRY_ALREADY_REVERSED` no estorno conta como sucesso: com a mesma chave a resposta seria a gravada, então
+    essa recusa só aparece se o débito já foi estornado por outro caminho, e o estado final é o correto.
+  - O lease (`TRANSFERS_LEASE_TTL`) precisa passar do dobro do pior caso da liquidação (tentativas × (prazo +
+    backoff máximo)); a configuração recusa o boot se não passar.
+  - O texto do extrato é cortado em 140 caracteres no transfers: passar do limite do ledger seria uma recusa por
+    formato, que a etapa repetiria para sempre.
+  - A validação com dependência fora do ar (inclusive durante a subida dos serviços) recusa o Pix com
+    `DEPENDENCY_UNAVAILABLE`, sem mover dinheiro; o span `pix.saga.accepted` mostra a causa.
 - Pix em `PENDING_CONFIRMATION` além do prazo **não se resolvem sozinhos** até a Fase 5. É intencional (regra 10).
 - Um ledger fora do ar por muito tempo deixa Pix parados em `VALIDATED`, `REVERSING` ou `SETTLED`. A métrica de idade
   por estado mostra isso, e o alerta vem na Fase 6.

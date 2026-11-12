@@ -134,6 +134,7 @@ const (
 	ReasonDependencyUnavailable
 	ReasonSettlementRejected
 	ReasonSettlementNotSent
+	ReasonSourceAccountInvalid
 )
 
 var reasonNames = map[Reason]string{
@@ -141,6 +142,7 @@ var reasonNames = map[Reason]string{
 	ReasonDestinationInvalid: "destination_invalid", ReasonSameAccount: "same_account",
 	ReasonInsufficientFunds: "insufficient_funds", ReasonDependencyUnavailable: "dependency_unavailable",
 	ReasonSettlementRejected: "settlement_rejected", ReasonSettlementNotSent: "settlement_not_sent",
+	ReasonSourceAccountInvalid: "source_account_invalid",
 }
 
 func (r Reason) String() string {
@@ -165,7 +167,13 @@ func ParseReason(name string) (Reason, error) {
 
 // IsRejection diz se o motivo leva a REJECTED (antes de mover dinheiro).
 func (r Reason) IsRejection() bool {
-	return r >= ReasonAntifraudDenied && r <= ReasonDependencyUnavailable
+	switch r {
+	case ReasonAntifraudDenied, ReasonLimitExceeded, ReasonDestinationInvalid, ReasonSameAccount,
+		ReasonInsufficientFunds, ReasonDependencyUnavailable, ReasonSourceAccountInvalid:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsReversal diz se o motivo leva a REVERSING (estorno do débito).

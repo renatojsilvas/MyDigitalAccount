@@ -309,12 +309,23 @@ services:
       TRANSFERS_DB_NAME: transfers
       TRANSFERS_DAILY_LIMIT_CENTS: ${TRANSFERS_DAILY_LIMIT_CENTS:-200000}
       TRANSFERS_REQUEST_HASH_KEY: ${TRANSFERS_REQUEST_HASH_KEY:?defina TRANSFERS_REQUEST_HASH_KEY no .env (mínimo 32 caracteres)}
+      TRANSFERS_ANTIFRAUDE_ADDR: antifraude:50061
+      TRANSFERS_LEDGER_ADDR: ledger:50051
+      TRANSFERS_SPI_ADDR: spi-fake:50071
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "127.0.0.1:${TRANSFERS_GRPC_HOST_PORT:-50081}:50081"
     depends_on:
       transfers-migrate:
         condition: service_completed_successfully
+      # service_started: o transfers funciona sem elas (recusa por indisponibilidade ou espera,
+      # conforme a etapa, ADR-0007); a dependência só ordena a subida.
+      ledger:
+        condition: service_started
+      antifraude:
+        condition: service_started
+      spi-fake:
+        condition: service_started
 
   transfers-migrate:
     <<: *dev-service
