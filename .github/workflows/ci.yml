@@ -64,6 +64,9 @@ jobs:
           docker build -f services/spi-fake/Dockerfile --target final \
             --build-context tools=docker-image://conta-digital/tools:dev \
             -t conta-digital/spi-fake:final .
+          docker build -f services/transfers/Dockerfile --target final \
+            --build-context tools=docker-image://conta-digital/tools:dev \
+            -t conta-digital/transfers:final .
           docker build -f bff/Dockerfile --target final \
             --build-context tools=docker-image://conta-digital/tools:dev \
             -t conta-digital/bff:final .

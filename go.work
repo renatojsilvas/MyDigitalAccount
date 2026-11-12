@@ -6,5 +6,6 @@ use (
 	./services/antifraude
 	./services/ledger
 	./services/spi-fake
+	./services/transfers
 	./testkit
 )

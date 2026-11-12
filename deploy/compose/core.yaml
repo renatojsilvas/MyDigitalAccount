@@ -147,11 +147,13 @@ services:
       PGPORT: "5432"
       PGUSER: ${POSTGRES_USER:?defina POSTGRES_USER no .env}
       PGPASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
-      BOOTSTRAP_SERVICES: ledger spi
+      BOOTSTRAP_SERVICES: ledger spi transfers
       LEDGER_DB_OWNER_PASSWORD: ${LEDGER_DB_OWNER_PASSWORD:?defina LEDGER_DB_OWNER_PASSWORD no .env}
       LEDGER_DB_APP_PASSWORD: ${LEDGER_DB_APP_PASSWORD:?defina LEDGER_DB_APP_PASSWORD no .env}
       SPI_DB_OWNER_PASSWORD: ${SPI_DB_OWNER_PASSWORD:?defina SPI_DB_OWNER_PASSWORD no .env}
       SPI_DB_APP_PASSWORD: ${SPI_DB_APP_PASSWORD:?defina SPI_DB_APP_PASSWORD no .env}
+      TRANSFERS_DB_OWNER_PASSWORD: ${TRANSFERS_DB_OWNER_PASSWORD:?defina TRANSFERS_DB_OWNER_PASSWORD no .env}
+      TRANSFERS_DB_APP_PASSWORD: ${TRANSFERS_DB_APP_PASSWORD:?defina TRANSFERS_DB_APP_PASSWORD no .env}
     volumes:
       - ./deploy/postgres/bootstrap.sh:/bootstrap/bootstrap.sh:ro
     depends_on:
@@ -279,6 +281,63 @@ services:
       SPI_DB_USER: spi_owner
       SPI_DB_PASSWORD: ${SPI_DB_OWNER_PASSWORD:?defina SPI_DB_OWNER_PASSWORD no .env}
       SPI_DB_NAME: spi
+    depends_on:
+      postgres-bootstrap:
+        condition: service_completed_successfully
+
+  # Orquestrador do Pix (ADR-0007): aceite idempotente, máquina de estados e limite diário.
+  transfers:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/transfers:dev
+    build:
+      context: .
+      dockerfile: services/transfers/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: docker-image://conta-digital/tools:dev
+    working_dir: /workspace/services/transfers
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRANSFERS_GRPC_ADDR: ":50081"
+      TRANSFERS_ADMIN_ADDR: ":8084"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      TRANSFERS_DB_USER: transfers_app
+      TRANSFERS_DB_PASSWORD: ${TRANSFERS_DB_APP_PASSWORD:?defina TRANSFERS_DB_APP_PASSWORD no .env}
+      TRANSFERS_DB_NAME: transfers
+      TRANSFERS_DAILY_LIMIT_CENTS: ${TRANSFERS_DAILY_LIMIT_CENTS:-200000}
+      TRANSFERS_REQUEST_HASH_KEY: ${TRANSFERS_REQUEST_HASH_KEY:?defina TRANSFERS_REQUEST_HASH_KEY no .env (mínimo 32 caracteres)}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    ports:
+      - "127.0.0.1:${TRANSFERS_GRPC_HOST_PORT:-50081}:50081"
+    depends_on:
+      transfers-migrate:
+        condition: service_completed_successfully
+
+  transfers-migrate:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/transfers:dev
+    build:
+      context: .
+      dockerfile: services/transfers/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: docker-image://conta-digital/tools:dev
+    working_dir: /workspace/services/transfers
+    command: ["go", "run", "./cmd/transfers", "migrate"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      TRANSFERS_DB_USER: transfers_owner
+      TRANSFERS_DB_PASSWORD: ${TRANSFERS_DB_OWNER_PASSWORD:?defina TRANSFERS_DB_OWNER_PASSWORD no .env}
+      TRANSFERS_DB_NAME: transfers
     depends_on:
       postgres-bootstrap:
         condition: service_completed_successfully

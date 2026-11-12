@@ -1,0 +1,88 @@
+-- name: ClaimIdempotencyKey :execrows
+-- Primeiro comando do aceite. Se outra transação já inseriu a mesma chave e ainda não terminou,
+-- espera por ela no índice único; zero linhas = a chave já existe.
+INSERT INTO transfer_idempotency_keys (account_id, key, request_hmac, transfer_id)
+VALUES (@account_id, @key, @request_hmac, @transfer_id)
+ON CONFLICT (account_id, key) DO NOTHING;
+
+-- name: GetIdempotencyKey :one
+SELECT request_hmac, transfer_id
+FROM transfer_idempotency_keys
+WHERE account_id = @account_id AND key = @key;
+
+-- name: InsertTransfer :exec
+INSERT INTO transfers (id, source_account_id, destination_key_type, destination_key, amount_cents, description,
+                       state, settlement_id, limit_day, trace_carrier, next_run_at, created_at, updated_at)
+VALUES (@id, @source_account_id, @destination_key_type, @destination_key, @amount_cents, @description,
+        @state, @settlement_id, @limit_day, @trace_carrier, @next_run_at, @created_at, @updated_at);
+
+-- name: InsertHistory :exec
+INSERT INTO transfer_state_history (transfer_id, from_state, to_state, reason, at)
+VALUES (@transfer_id, sqlc.narg(from_state), @to_state, sqlc.narg(reason), @at);
+
+-- name: GetTransfer :one
+SELECT id, source_account_id, destination_key_type, destination_key, destination_account_id, amount_cents,
+       description, state, reason, settlement_id, debit_entry_id, limit_day, limit_reserved,
+       settlement_maybe_sent, confirmation_overdue, trace_carrier, created_at, updated_at
+FROM transfers
+WHERE id = @id;
+
+-- name: ListHistory :many
+SELECT from_state, to_state, reason, at
+FROM transfer_state_history
+WHERE transfer_id = @transfer_id
+ORDER BY id;
+
+-- name: UsedOn :one
+SELECT coalesce((SELECT used_cents FROM daily_limit_usage WHERE account_id = @account_id AND day = @day), 0)::bigint;
+
+-- name: AcquireLease :one
+-- Toma o lease de uma transferência não terminal cujo lease está livre ou expirado. O token
+-- cresce a cada tomada: é o fencing token (ADR-0007, seção 4).
+UPDATE transfers
+SET lease_owner = @owner, lease_until = now() + @ttl::interval, lease_token = lease_token + 1
+WHERE id = @id
+  AND state NOT IN ('completed', 'reversed', 'rejected')
+  AND (lease_until IS NULL OR lease_until < now())
+RETURNING lease_token;
+
+-- name: LockLeased :one
+-- Trava a transferência só se o lease ainda for de quem pede; nenhuma linha = lease perdido.
+SELECT state, source_account_id, amount_cents, limit_day, limit_reserved
+FROM transfers
+WHERE id = @id AND lease_token = @lease_token
+FOR UPDATE;
+
+-- name: EnsureUsageRow :exec
+INSERT INTO daily_limit_usage (account_id, day, used_cents)
+VALUES (@account_id, @day, 0)
+ON CONFLICT (account_id, day) DO NOTHING;
+
+-- name: ReserveUsage :execrows
+-- Reserva atômica: soma só se couber no limite; zero linhas = limite estourado.
+UPDATE daily_limit_usage
+SET used_cents = used_cents + @amount_cents
+WHERE account_id = @account_id AND day = @day AND used_cents + @amount_cents <= @daily_limit_cents;
+
+-- name: ReleaseUsage :execrows
+-- Devolve ao dia da reserva (limit_day da transferência), nunca ao dia corrente.
+UPDATE daily_limit_usage
+SET used_cents = used_cents - @amount_cents
+WHERE account_id = @account_id AND day = @day;
+
+-- name: MarkLimitReserved :execrows
+UPDATE transfers
+SET limit_reserved = @limit_reserved, updated_at = @updated_at
+WHERE id = @id AND lease_token = @lease_token;
+
+-- name: TransitionTransfer :execrows
+-- Compare-and-set com fencing: só transita se o estado for o esperado e o lease ainda for de
+-- quem pede (ADR-0007, seção 2). Zero linhas = transição perdida.
+UPDATE transfers
+SET state = @to_state,
+    reason = sqlc.narg(reason),
+    destination_account_id = coalesce(sqlc.narg(destination_account_id), destination_account_id),
+    debit_entry_id = coalesce(sqlc.narg(debit_entry_id), debit_entry_id),
+    next_run_at = @next_run_at,
+    updated_at = @updated_at
+WHERE id = @id AND state = @from_state AND lease_token = @lease_token;

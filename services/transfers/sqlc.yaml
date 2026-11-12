@@ -1,0 +1,19 @@
+# sqlc: gera código Go tipado a partir das queries SQL, conferindo cada uma contra o schema
+# das migrations (o sqlc entende o formato do goose). Saída fora do Git, recriada por
+# `make generate`, como o código do .proto (ADR-0001).
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: internal/postgres/queries
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/postgres/sqlcgen
+        sql_package: pgx/v5
+        emit_empty_slices: true
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: timestamptz
+            go_type: time.Time

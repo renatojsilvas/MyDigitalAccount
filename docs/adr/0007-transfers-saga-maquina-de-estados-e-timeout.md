@@ -283,6 +283,12 @@ Num Pix terminado (`COMPLETED` ou `REVERSED`), a `settlement` fecha em zero para
   `transfers`, `transfer_state_history`, `transfer_idempotency_keys` e `daily_limit_usage`.
 - O registro da transferência guarda a chave Pix de destino (é o dado de negócio, como num comprovante); logs, traces
   e métricas só a veem mascarada. A tabela de idempotência não guarda dado pessoal.
+- **Implementação (passo 6)**: o aceite reserva a chave de idempotência **antes** de gravar a transferência (FK
+  `DEFERRABLE INITIALLY DEFERRED`, conferida no `COMMIT`), como no ledger: um pedido concorrente com a mesma chave
+  espera no índice único em vez de gravar uma transferência órfã. O binário embute a base de fusos
+  (`time/tzdata`): a imagem final é distroless, e sem ela o dia do limite em `America/Sao_Paulo` falharia só em
+  produção. O papel `transfers_app` só pode atualizar as colunas da saga; valor, origem, destino informado,
+  `settlement_id` e o dia do limite são imutáveis também por privilégio.
 - Pix em `PENDING_CONFIRMATION` além do prazo **não se resolvem sozinhos** até a Fase 5. É intencional (regra 10).
 - Um ledger fora do ar por muito tempo deixa Pix parados em `VALIDATED`, `REVERSING` ou `SETTLED`. A métrica de idade
   por estado mostra isso, e o alerta vem na Fase 6.
