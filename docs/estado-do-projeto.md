@@ -63,6 +63,9 @@ Num checkout limpo da Fase 1, `make lint test` passava em 62 s.
   - `POST /auth/demo-login` (só `development` e `test`; em production a rota não existe e o boot falha se for
     ligada): CPF → `GetAccountByDocument` → JWT HS256 (`sub` = `account_id`, 15 min, sem CPF no token).
   - `GET /ping` continua (diagnóstico da Fase 0, **público**).
+  - **Aquecimento no boot**: antes de aceitar tráfego, `start()` faz um ping ao ledger (`warmUp`), com o prazo
+    `LEDGER_TIMEOUT_MS` e sem nunca falhar o boot; o `/readyz` continua sem consultar o ledger. Mediu-se (3 reinícios):
+    1º login 60 a 125 ms (antes: 504 em mais de 1 s) e 1º `/home` 14 a 32 ms (antes: ~318 ms).
   - OpenAPI gerado dos schemas Zod: `gen/openapi/bff.json` (`make generate`); sondas de saúde ficam fora.
   - Erros em `application/problem+json` (RFC 9457) com `trace_id`; toda resposta traz `x-trace-id`. O `traceparent` de
     entrada **não é continuado**: vira um span link num trace novo (ADR-0006).
@@ -184,7 +187,7 @@ Valores em centavos (`int64`), sempre positivos. Erros: status gRPC canônico + 
 - Exportação opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`; `service.instance.id` (hostname) em todo recurso.
 - Tempo 3.x monolítico, disco local; Loki em instância única; retenção de 48 h (Tempo), 72 h (Loki), 7 d (Prometheus).
 - Healthcheck de imagens sem shell com um `busybox` estático copiado; Grafana sem login só em `127.0.0.1`.
-- `/readyz` do BFF não consulta o ledger (degradação parcial na Fase 2); o do ledger consulta o Postgres.
+- `/readyz` do BFF não consulta o ledger (degradação parcial na Fase 2); o do ledger consulta o Postgres. O aquecimento do boot (Fase 2) também não entra na prontidão.
 
 **ADR-0003, ambiente em contêineres**
 - Imagem `tools` com tudo (Go 1.27.4, Node 24.22.2, pnpm 12.18.0, buf 1.75.0, sqlc 1.31.1, golangci-lint 2.15.0, goose 3.30.0, grpcurl 1.9.4, air 1.67.4, govulncheck 1.9.0); `GOTOOLCHAIN=local`.
@@ -253,8 +256,7 @@ docker compose run --rm tools make obs-e2e
 docker compose --profile core down && docker volume rm conta-digital_postgres-data
 ```
 
-Atenção: a **primeira** chamada ao ledger depois que o BFF sobe é lenta (partida a frio, seção 8): se o login der 504,
-repita. Contas de demonstração (CPFs fictícios): Ana 123.456.789-09 (R$ 5.000,00), Bruno 987.654.321-00 (R$ 1.500,00),
+Contas de demonstração (CPFs fictícios): Ana 123.456.789-09 (R$ 5.000,00), Bruno 987.654.321-00 (R$ 1.500,00),
 Carla 111.444.777-35 (R$ 250,00), Diego 000.000.001-91 (R$ 0,00). Os `account_id` são UUIDv7 gerados pelo ledger:
 saem no log do `make seed` e **mudam se o banco for recriado**.
 
@@ -305,10 +307,6 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
 - O `.devcontainer` **nunca rodou** (abrir o VS Code dentro do contêiner `tools`); só o CI foi validado.
 
 **Decisões pendentes da Fase 2 (suas)**
-- **Partida a frio do BFF**: a primeira chamada ao ledger depois que o BFF sobe leva ~300 ms (`/home`) a mais de 1 s
-  (login, que deu 504), e as seguintes 10 a 25 ms. Com 250/200 ms, o primeiro `/home` pode vir com extrato `timeout`.
-  Opções: aquecer o ledger (ping) no boot sem entrar na prontidão (recomendada), prazo maior na primeira chamada, ou
-  calibrar na Fase 7. O `/readyz` não consulta o ledger (ADR-0002).
 - **Sem imagem final do `web`** (só `dev`, com o proxy do Vite): foge da regra de imagem final por serviço. Se quiser,
   nginx não-root com digest fixado.
 - **`BFF_JWT_SECRET` no seu `.env`** (obrigatório; valor de desenvolvimento no `.env.example`). Sem ele, nenhum
@@ -341,7 +339,7 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
 - `psql` da imagem `tools` é o 15 contra servidor 18 (use `docker compose exec postgres psql`).
 - `gen/` e `sqlcgen/` são pré-requisito do build das imagens finais; exportação de telemetria opt-in; `service.version` = `dev`.
 
-**Resolvidas na Fase 2**: teste instável do BFF (era o `grpc-wire.test.ts`: 11 falhas em 13 execuções sob CPU
+**Resolvidas na Fase 2**: partida a frio do BFF (aquecimento da conexão com o ledger no boot, medido); teste instável do BFF (era o `grpc-wire.test.ts`: 11 falhas em 13 execuções sob CPU
 disputada; a causa era um prazo de 150 ms numa conexão HTTP/2 real e fria, que não fazia parte do que o teste prova;
 agora os caminhos de sucesso usam prazo de 10 s e os de timeout usam um handler que nunca responde, `hang`, com prazo
 curto; paralelismo e isolamento de prazos são provados com barreira e portão, sem `sleep`; 0 falhas em 20 execuções

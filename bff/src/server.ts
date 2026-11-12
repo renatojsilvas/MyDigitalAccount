@@ -9,7 +9,10 @@ export interface RunningServer {
 }
 
 export async function start(config: Config, overrides: AppOverrides = {}): Promise<RunningServer> {
-  const { app, lifecycle } = buildApp(config, overrides);
+  const { app, lifecycle, warmUp } = buildApp(config, overrides);
+  // Antes de aceitar tráfego, mas sem poder derrubar o boot nem entrar na prontidão: o prazo é o
+  // da própria chamada ao ledger (LEDGER_TIMEOUT_MS) e a falha só vira um aviso no log.
+  await warmUp();
   await app.listen({ host: config.host, port: config.port });
   const address = app.server.address() as AddressInfo;
   app.log.info(

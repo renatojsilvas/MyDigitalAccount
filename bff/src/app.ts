@@ -1,3 +1,4 @@
+import { ROOT_CONTEXT } from "@opentelemetry/api";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import type { Interceptor, Transport } from "@connectrpc/connect";
 import Fastify, { LogController, type FastifyBaseLogger, type FastifyInstance } from "fastify";
@@ -47,6 +48,12 @@ export interface BuiltApp {
   readonly app: FastifyInstance;
   readonly lifecycle: Lifecycle;
   readonly telemetry: Telemetry;
+  /**
+   * Aquece a conexão com o ledger (HTTP/2, primeiro uso do cliente) para que o primeiro usuário
+   * não pague a partida a frio dentro de um prazo de 250 ms. Nunca falha: se o ledger não
+   * responde, só registra. NÃO faz parte da prontidão (ADR-0002): o /readyz não consulta o ledger.
+   */
+  readonly warmUp: () => Promise<void>;
 }
 
 /**
@@ -138,5 +145,17 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
     await telemetry.shutdown(); // descarrega traces, métricas e logs pendentes
   });
 
-  return { app, lifecycle, telemetry };
+  const warmUp = async (): Promise<void> => {
+    const result = await ledger.ping("warmup", { context: ROOT_CONTEXT });
+    if (result.ok) {
+      baseLogger.info("conexão com o ledger aquecida");
+    } else {
+      baseLogger.warn(
+        { dependency_error: result.error.kind },
+        "aquecimento do ledger falhou; o BFF segue, a primeira chamada pagará a partida a frio",
+      );
+    }
+  };
+
+  return { app, lifecycle, telemetry, warmUp };
 }
