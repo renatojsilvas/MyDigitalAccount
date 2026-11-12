@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+package conta.transfers.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// TransfersService orquestra o Pix (saga orquestrada, ADR-0007) e é o dono do limite diário.
+//
+// Convenções do contrato:
+//   - Valores em centavos, int64, sempre positivos.
+//   - StartPix exige idempotency_key, com escopo pela conta de origem. A mesma chave com o
+//     mesmo pedido devolve o mesmo Pix (no estado atual); com pedido diferente falha com
+//     ALREADY_EXISTS e ErrorReason IDEMPOTENCY_KEY_REUSED.
+//   - account_id nos pedidos é a conta autenticada, informada pelo BFF a partir do token.
+//     Um Pix de outra conta responde NOT_FOUND, sem revelar que existe.
+//   - Erros de domínio voltam como status gRPC com um google.rpc.ErrorInfo nos detalhes:
+//     reason = nome de um valor de ErrorReason, domain = "transfers.conta.local".
+service TransfersService {
+  // Aceita um Pix e devolve o seu ID no estado ACCEPTED. Não espera a liquidação: a saga
+  // roda depois, de forma assíncrona (ADR-0007, seção 4); acompanhe por GetPix. Só o formato
+  // é validado aqui (INVALID_ARGUMENT); recusas de negócio (antifraude, limite, destino,
+  // saldo) aparecem depois, no estado do Pix.
+  rpc StartPix(StartPixRequest) returns (StartPixResponse);
+
+  // Consulta um Pix da conta, com o histórico de estados. NOT_FOUND (PIX_NOT_FOUND).
+  rpc GetPix(GetPixRequest) returns (GetPixResponse);
+
+  // Limite diário de Pix da conta: total, usado e disponível no dia corrente
+  // (America/Sao_Paulo).
+  rpc GetLimits(GetLimitsRequest) returns (GetLimitsResponse);
+}
+
+// Motivos de erro de domínio, enviados como texto em google.rpc.ErrorInfo.reason.
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  // O pedido viola uma regra de formato; metadata.field diz o campo.
+  ERROR_REASON_INVALID_REQUEST = 1;
+  // A chave de idempotência já foi usada, pela mesma conta, com um pedido diferente.
+  ERROR_REASON_IDEMPOTENCY_KEY_REUSED = 2;
+  // O Pix não existe ou não é da conta informada.
+  ERROR_REASON_PIX_NOT_FOUND = 3;
+}
+
+// Tipo da chave Pix. Na demonstração só existe CPF (ADR-0007, seção 8); outros tipos entram
+// como valores novos, sem quebrar o contrato.
+enum PixKeyType {
+  PIX_KEY_TYPE_UNSPECIFIED = 0;
+  PIX_KEY_TYPE_CPF = 1;
+}
+
+message PixKey {
+  PixKeyType type = 1;
+  // CPF: 11 dígitos, com dígitos verificadores válidos. Dado sensível: nunca vai para log ou
+  // trace sem máscara.
+  string value = 2;
+}
+
+// Estado detalhado da saga (ADR-0007, seção 2). Para exibir ao cliente, use PixStatus.
+enum PixState {
+  PIX_STATE_UNSPECIFIED = 0;
+  // Aceito e persistido; nada foi movido.
+  PIX_STATE_ACCEPTED = 1;
+  // Antifraude aprovou, limite reservado, destino válido.
+  PIX_STATE_VALIDATED = 2;
+  // Débito feito no ledger.
+  PIX_STATE_DEBITED = 3;
+  // Liquidação em tentativa no SPI.
+  PIX_STATE_SETTLING = 4;
+  // Sem resposta definitiva do SPI; débito mantido até a confirmação.
+  PIX_STATE_PENDING_CONFIRMATION = 5;
+  // SPI confirmou a liquidação; falta o crédito no destino.
+  PIX_STATE_SETTLED = 6;
+  // Terminal: crédito feito no destino.
+  PIX_STATE_COMPLETED = 7;
+  // Decidido estornar; estorno em andamento.
+  PIX_STATE_REVERSING = 8;
+  // Terminal: débito estornado.
+  PIX_STATE_REVERSED = 9;
+  // Terminal: recusado antes de mover dinheiro.
+  PIX_STATE_REJECTED = 10;
+}
+
+// Situação do Pix como o cliente a vê. Derivada do estado pelo transfers, para que nenhum
+// cliente do contrato precise conhecer a máquina de estados.
+enum PixStatus {
+  PIX_STATUS_UNSPECIFIED = 0;
+  // Qualquer estado não terminal, inclusive PENDING_CONFIRMATION.
+  PIX_STATUS_PROCESSING = 1;
+  // COMPLETED.
+  PIX_STATUS_COMPLETED = 2;
+  // REVERSED: o dinheiro saiu e voltou.
+  PIX_STATUS_FAILED = 3;
+  // REJECTED: o dinheiro não chegou a sair.
+  PIX_STATUS_REJECTED = 4;
+}
+
+// Por que o Pix foi recusado ou estornado, ou por que uma transição aconteceu.
+enum PixReason {
+  PIX_REASON_UNSPECIFIED = 0;
+  // Recusas (estado REJECTED).
+  PIX_REASON_ANTIFRAUD_DENIED = 1;
+  PIX_REASON_LIMIT_EXCEEDED = 2;
+  // A chave de destino não corresponde a uma conta ativa.
+  PIX_REASON_DESTINATION_INVALID = 3;
+  // Origem e destino são a mesma conta.
+  PIX_REASON_SAME_ACCOUNT = 4;
+  PIX_REASON_INSUFFICIENT_FUNDS = 5;
+  // Antifraude ou ledger não responderam na validação; nada foi movido.
+  PIX_REASON_DEPENDENCY_UNAVAILABLE = 6;
+  // Estornos (estado REVERSED).
+  // O SPI recusou a liquidação.
+  PIX_REASON_SETTLEMENT_REJECTED = 7;
+  // Comprovadamente nenhuma tentativa de liquidação saiu (ADR-0007, seção 5).
+  PIX_REASON_SETTLEMENT_NOT_SENT = 8;
+}
+
+message PixStateChange {
+  // UNSPECIFIED na primeira linha (criação).
+  PixState from_state = 1;
+  PixState to_state = 2;
+  // UNSPECIFIED quando a transição não tem motivo próprio.
+  PixReason reason = 3;
+  google.protobuf.Timestamp at = 4;
+}
+
+message Pix {
+  string pix_id = 1;
+  string source_account_id = 2;
+  // Vazio até a validação do destino.
+  string destination_account_id = 3;
+  // Chave de destino mascarada (CPF: ***.456.789-**). A chave completa nunca sai do transfers.
+  string destination_key_masked = 4;
+  PixKeyType destination_key_type = 5;
+  int64 amount_cents = 6;
+  string description = 7;
+  PixState state = 8;
+  PixStatus status = 9;
+  // Motivo da recusa (REJECTED) ou do estorno (REVERSED); UNSPECIFIED nos demais.
+  PixReason reason = 10;
+  // Pendente de confirmação além do prazo máximo; espera a conciliação (ADR-0007, seção 5).
+  bool confirmation_overdue = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+  // Histórico de estados, do mais antigo para o mais recente. Só em GetPix.
+  repeated PixStateChange history = 14;
+}
+
+message StartPixRequest {
+  // Do cliente, de 1 a 128 caracteres ASCII visíveis; escopo pela conta de origem.
+  string idempotency_key = 1;
+  // Conta de origem: a conta autenticada.
+  string account_id = 2;
+  PixKey destination_key = 3;
+  // Maior que zero.
+  int64 amount_cents = 4;
+  // Opcional, até 140 caracteres; aparece no extrato.
+  string description = 5;
+}
+
+message StartPixResponse {
+  // O Pix no estado atual: ACCEPTED num pedido novo; numa repetição pela mesma chave, o estado
+  // em que ele já estiver.
+  Pix pix = 1;
+}
+
+message GetPixRequest {
+  // Conta autenticada; o Pix precisa ser dela.
+  string account_id = 1;
+  string pix_id = 2;
+}
+
+message GetPixResponse {
+  Pix pix = 1;
+}
+
+message GetLimitsRequest {
+  string account_id = 1;
+}
+
+message GetLimitsResponse {
+  string account_id = 1;
+  int64 daily_limit_cents = 2;
+  // Reservado por Pix do dia que não foram recusados nem estornados.
+  int64 used_today_cents = 3;
+  // daily_limit_cents - used_today_cents, nunca negativo.
+  int64 available_today_cents = 4;
+  // Quando o uso volta a zero (meia-noite em America/Sao_Paulo).
+  google.protobuf.Timestamp resets_at = 5;
+}

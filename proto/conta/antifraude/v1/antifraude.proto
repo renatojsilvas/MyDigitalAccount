@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package conta.antifraude.v1;
+
+import "google/protobuf/duration.proto";
+
+// AntifraudeService avalia o risco de um Pix a partir de contadores de velocidade no Redis
+// (ADR-0008). A decisão é do antifraude; quem chama só a aplica.
+service AntifraudeService {
+  // Avalia um Pix. Idempotente por transfer_id: repetir a avaliação do mesmo Pix não conta
+  // de novo nos contadores. Com o Redis fora do ar, responde normalmente com degraded = true
+  // (ADR-0008, seção 3). UNAVAILABLE quando a falha é injetada (AntifraudeAdminService).
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+}
+
+// AntifraudeAdminService troca, em tempo de execução, as falhas injetadas para testes de
+// resiliência (ADR-0008, seção 5). Só na rede interna; nunca exposto pelo BFF.
+service AntifraudeAdminService {
+  rpc SetFaults(SetFaultsRequest) returns (SetFaultsResponse);
+  rpc GetFaults(GetFaultsRequest) returns (GetFaultsResponse);
+}
+
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_APPROVE = 1;
+  DECISION_DENY = 2;
+}
+
+// Sinais de risco que contribuíram para o score.
+enum RiskSignal {
+  RISK_SIGNAL_UNSPECIFIED = 0;
+  // Valor do Pix acima do limite de valor alto.
+  RISK_SIGNAL_HIGH_AMOUNT = 1;
+  // Muitos Pix da conta na última hora.
+  RISK_SIGNAL_HIGH_VELOCITY_COUNT = 2;
+  // Valor alto somado na última hora.
+  RISK_SIGNAL_HIGH_VELOCITY_AMOUNT = 3;
+  // Contadores indisponíveis (Redis fora do ar) e valor acima do teto degradado.
+  RISK_SIGNAL_VELOCITY_UNAVAILABLE = 4;
+}
+
+message EvaluateRequest {
+  // Chave de idempotência da avaliação: o mesmo Pix só conta uma vez.
+  string transfer_id = 1;
+  // Conta de origem.
+  string account_id = 2;
+  // Maior que zero.
+  int64 amount_cents = 3;
+}
+
+message EvaluateResponse {
+  Decision decision = 1;
+  // De 0 a 100; quanto maior, mais arriscado.
+  int32 score = 2;
+  repeated RiskSignal signals = 3;
+  // Verdadeiro quando os contadores não estavam disponíveis e a decisão usou só as regras
+  // sem histórico.
+  bool degraded = 4;
+}
+
+message Faults {
+  // Atraso acrescentado a cada Evaluate. Zero = nenhum.
+  google.protobuf.Duration latency = 1;
+  // Fração de Evaluate que falham com UNAVAILABLE, de 0 a 1. É uma probabilidade, não dinheiro.
+  double error_rate = 2;
+}
+
+message SetFaultsRequest {
+  Faults faults = 1;
+}
+
+message SetFaultsResponse {
+  // As falhas em vigor depois da troca.
+  Faults faults = 1;
+}
+
+message GetFaultsRequest {}
+
+message GetFaultsResponse {
+  Faults faults = 1;
+}

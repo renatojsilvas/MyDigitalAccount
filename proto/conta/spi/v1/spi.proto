@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package conta.spi.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// SpiService é o contrato da liquidação no SPI. Neste projeto quem o implementa é o spi-fake
+// (simulador): o contrato descreve o SPI, não o simulador, por isso não leva "fake" no nome.
+//
+// Convenções do contrato:
+//   - settlement_id é gerado e persistido por quem pede a liquidação ANTES da chamada, e toda
+//     nova tentativa usa o mesmo ID (ADR-0007, seção 5). Settle é idempotente por ele: repetir
+//     devolve o resultado já registrado, sem liquidar de novo. O mesmo ID com pedido diferente
+//     falha com ALREADY_EXISTS (SETTLEMENT_ID_REUSED).
+//   - Erros de domínio voltam como status gRPC com um google.rpc.ErrorInfo nos detalhes:
+//     reason = nome de um valor de ErrorReason, domain = "spi.conta.local".
+service SpiService {
+  // Pede a liquidação. Responde com o resultado (SETTLED ou REJECTED). Um timeout aqui não
+  // diz nada sobre o resultado: consulte GetSettlement.
+  rpc Settle(SettleRequest) returns (SettleResponse);
+
+  // Consulta uma liquidação pelo ID. NOT_FOUND (SETTLEMENT_NOT_FOUND) não prova que ela não
+  // vai acontecer: o pedido pode estar em trânsito.
+  rpc GetSettlement(GetSettlementRequest) returns (GetSettlementResponse);
+}
+
+// SpiAdminService troca, em tempo de execução, o comportamento do simulador (spi-fake), para
+// testes do timeout na liquidação. Só na rede interna; nunca exposto pelo BFF.
+service SpiAdminService {
+  rpc SetBehavior(SetBehaviorRequest) returns (SetBehaviorResponse);
+  rpc GetBehavior(GetBehaviorRequest) returns (GetBehaviorResponse);
+}
+
+enum ErrorReason {
+  ERROR_REASON_UNSPECIFIED = 0;
+  // O pedido viola uma regra de formato; metadata.field diz o campo.
+  ERROR_REASON_INVALID_REQUEST = 1;
+  // O settlement_id já foi usado com um pedido diferente.
+  ERROR_REASON_SETTLEMENT_ID_REUSED = 2;
+  // Não há liquidação registrada com esse ID (ainda).
+  ERROR_REASON_SETTLEMENT_NOT_FOUND = 3;
+}
+
+enum SettlementStatus {
+  SETTLEMENT_STATUS_UNSPECIFIED = 0;
+  // Liquidada: o dinheiro foi transferido entre os participantes.
+  SETTLEMENT_STATUS_SETTLED = 1;
+  // Recusa explícita: não liquidou e não vai liquidar.
+  SETTLEMENT_STATUS_REJECTED = 2;
+}
+
+enum RejectReason {
+  REJECT_REASON_UNSPECIFIED = 0;
+  // Recusa simulada pelo modo REJECT do spi-fake.
+  REJECT_REASON_SIMULATED = 1;
+}
+
+message Settlement {
+  string settlement_id = 1;
+  // Referência do pagador (o ID do Pix); usada pela conciliação da Fase 5.
+  string transfer_id = 2;
+  string payer_account_id = 3;
+  string payee_account_id = 4;
+  // Maior que zero.
+  int64 amount_cents = 5;
+  SettlementStatus status = 6;
+  // Só quando REJECTED.
+  RejectReason reject_reason = 7;
+  // Quando o SPI decidiu (liquidou ou recusou).
+  google.protobuf.Timestamp decided_at = 8;
+}
+
+message SettleRequest {
+  // UUID gerado por quem pede; o mesmo em todas as tentativas.
+  string settlement_id = 1;
+  string transfer_id = 2;
+  string payer_account_id = 3;
+  string payee_account_id = 4;
+  int64 amount_cents = 5;
+}
+
+message SettleResponse {
+  // Numa repetição pelo mesmo settlement_id, é o resultado registrado na primeira vez.
+  Settlement settlement = 1;
+}
+
+message GetSettlementRequest {
+  string settlement_id = 1;
+}
+
+message GetSettlementResponse {
+  Settlement settlement = 1;
+}
+
+// Como o spi-fake responde a um Settle novo. Um Settle repetido de uma liquidação já
+// registrada segue o mesmo modo para a resposta, mas nunca muda o resultado registrado.
+enum SettleMode {
+  SETTLE_MODE_UNSPECIFIED = 0;
+  // Liquida e responde SETTLED.
+  SETTLE_MODE_SETTLE = 1;
+  // Recusa e responde REJECTED.
+  SETTLE_MODE_REJECT = 2;
+  // Liquida, mas não responde: segura a chamada até o prazo do cliente estourar. O cliente vê
+  // timeout; GetSettlement mostra SETTLED.
+  SETTLE_MODE_SETTLE_NO_RESPONSE = 3;
+  // Não liquida e não responde. O cliente vê timeout; GetSettlement responde NOT_FOUND.
+  SETTLE_MODE_NO_SETTLE_NO_RESPONSE = 4;
+}
+
+message Behavior {
+  SettleMode settle_mode = 1;
+  // Se verdadeiro, GetSettlement falha com UNAVAILABLE. Combina com qualquer modo, para testar
+  // o prazo máximo do worker de confirmação.
+  bool fail_status_queries = 2;
+}
+
+message SetBehaviorRequest {
+  Behavior behavior = 1;
+}
+
+message SetBehaviorResponse {
+  // O comportamento em vigor depois da troca.
+  Behavior behavior = 1;
+}
+
+message GetBehaviorRequest {}
+
+message GetBehaviorResponse {
+  Behavior behavior = 1;
+}
