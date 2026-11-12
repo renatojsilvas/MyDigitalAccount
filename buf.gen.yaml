@@ -1,17 +1,21 @@
 version: v2
+# Go: só os protos do projeto. google.rpc fica de fora: o Go usa o errdetails do genproto, e gerar
+# o mesmo tipo aqui o registraria duas vezes no binário (ADR-0006). O TypeScript tem o próprio
+# modelo, buf.gen.ts.yaml, que inclui google.rpc.
+inputs:
+  - directory: proto
+    exclude_paths:
+      - proto/google
 managed:
   enabled: true
   override:
     - file_option: go_package_prefix
       value: conta.local/gen/go
 plugins:
-  # Plugins Go ficam na imagem tools; o de TypeScript vem do workspace pnpm (ADR-0001).
+  # Plugins Go ficam na imagem tools (ADR-0001).
   - local: protoc-gen-go
     out: gen/go
     opt: paths=source_relative
   - local: protoc-gen-go-grpc
     out: gen/go
     opt: paths=source_relative
-  - local: node_modules/.bin/protoc-gen-es
-    out: gen/ts/src
-    opt: target=ts

@@ -23,6 +23,11 @@ service LedgerService {
   // NOT_FOUND (ACCOUNT_NOT_FOUND) se a conta não existe.
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
 
+  // Busca a conta de cliente pelo CPF do titular (usada pelo login de demonstração do BFF).
+  // Leitura, sem chave de idempotência. NOT_FOUND (ACCOUNT_NOT_FOUND) se o CPF não tem conta;
+  // INVALID_ARGUMENT (INVALID_REQUEST) se o CPF é inválido.
+  rpc GetAccountByDocument(GetAccountByDocumentRequest) returns (GetAccountByDocumentResponse);
+
   // Credita uma conta de cliente. A contrapartida é escolhida pelo ledger a partir do motivo.
   // NOT_FOUND (ACCOUNT_NOT_FOUND).
   rpc Credit(CreditRequest) returns (CreditResponse);
@@ -114,6 +119,15 @@ message GetAccountRequest {
 }
 
 message GetAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountByDocumentRequest {
+  // CPF do titular, 11 dígitos, com dígitos verificadores válidos. Dado sensível.
+  string holder_document = 1;
+}
+
+message GetAccountByDocumentResponse {
   Account account = 1;
 }
 

@@ -4,6 +4,10 @@ modules:
 lint:
   use:
     - STANDARD
+  ignore:
+    - proto/google # arquivos de terceiros (googleapis), fixados por commit; ver proto/google/README.md
 breaking:
   use:
     - FILE
+  ignore:
+    - proto/google

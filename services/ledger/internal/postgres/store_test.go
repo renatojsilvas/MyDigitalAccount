@@ -103,6 +103,21 @@ func TestAccountRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAccountByDocument(t *testing.T) {
+	s := newStore(t)
+	want := newCustomer(t)
+	create(t, s, want)
+
+	got, err := s.AccountByDocument(t.Context(), want.Snapshot().Document)
+	if err != nil || got.ID() != want.ID() {
+		t.Fatalf("AccountByDocument = %v, %v; want %s", got.ID(), err, want.ID())
+	}
+	other, _ := account.ParseCPF("52998224725")
+	if _, err := s.AccountByDocument(t.Context(), other); !errors.Is(err, account.ErrAccountNotFound) {
+		t.Errorf("CPF sem conta: err = %v, want ErrAccountNotFound", err)
+	}
+}
+
 func TestAccountNotFound(t *testing.T) {
 	s := newStore(t)
 	missing := newCustomer(t).ID()

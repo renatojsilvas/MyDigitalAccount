@@ -153,6 +153,11 @@ func (s *Service) Account(ctx context.Context, id ID) (Account, error) {
 	return s.store.Account(ctx, id)
 }
 
+// AccountByDocument devolve a conta de cliente do CPF informado.
+func (s *Service) AccountByDocument(ctx context.Context, doc Document) (Account, error) {
+	return s.store.AccountByDocument(ctx, doc)
+}
+
 // Balance devolve o saldo atual, lido sem lock: é o último saldo confirmado.
 func (s *Service) Balance(ctx context.Context, id ID) (Money, error) {
 	a, err := s.store.Account(ctx, id)

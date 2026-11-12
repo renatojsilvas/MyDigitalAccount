@@ -1,0 +1,9 @@
+version: v2
+# TypeScript: todos os protos, inclusive google.rpc (ErrorInfo e Status, ADR-0006). O plugin vem
+# do workspace pnpm (ADR-0001). Sem modo gerenciado: nada aqui depende de go_package.
+inputs:
+  - directory: proto
+plugins:
+  - local: node_modules/.bin/protoc-gen-es
+    out: gen/ts/src
+    opt: target=ts

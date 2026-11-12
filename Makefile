@@ -23,6 +23,7 @@ generate:
 	cp tools/templates/gen-ts-tsconfig.json gen/ts/tsconfig.json
 	pnpm install --frozen-lockfile
 	buf generate
+	buf generate --template buf.gen.ts.yaml
 	cd gen/go && go mod tidy && go build ./...
 	pnpm --filter @conta/contracts build
 	@for f in $(SQLC_CONFIGS); do echo "==> sqlc generate $$f"; sqlc generate -f $$f || exit 1; done
@@ -33,7 +34,7 @@ clean-gen:
 
 proto-lint:
 	buf lint
-	buf format -d --exit-code
+	buf format -d --exit-code --exclude-path proto/google
 
 # Módulos Go escritos à mão: serviços e testkit (gen/go é código gerado e fica de fora).
 GO_MODULES := $(patsubst %/go.mod,%,$(wildcard services/*/go.mod testkit/go.mod))

@@ -11,6 +11,8 @@ type Store interface {
 	WithTx(ctx context.Context, fn func(Tx) error) error
 	// Account lê uma conta de cliente sem travar. ErrAccountNotFound se não existir.
 	Account(ctx context.Context, id ID) (Account, error)
+	// AccountByDocument lê a conta de cliente do CPF, sem travar. ErrAccountNotFound se não existir.
+	AccountByDocument(ctx context.Context, doc Document) (Account, error)
 	// Statement lê até limit linhas com Seq menor que before (0 = desde a mais recente).
 	Statement(ctx context.Context, id ID, before int64, limit int32) ([]StatementLine, error)
 }

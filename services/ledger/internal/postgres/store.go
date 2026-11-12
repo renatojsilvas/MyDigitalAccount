@@ -77,6 +77,19 @@ func (s *Store) Account(ctx context.Context, id account.ID) (account.Account, er
 	return accountRow(row).toAccount()
 }
 
+// AccountByDocument lê a conta de cliente do CPF, sem travar. ErrAccountNotFound se não existir.
+func (s *Store) AccountByDocument(ctx context.Context, doc account.Document) (account.Account, error) {
+	row, err := s.q.GetCustomerAccountByDocument(ctx, doc.Digits())
+	if errors.Is(err, pgx.ErrNoRows) {
+		return account.Account{}, account.ErrAccountNotFound
+	}
+	if err != nil {
+		// O CPF não entra na mensagem: erros chegam ao log.
+		return account.Account{}, classify(fmt.Errorf("postgres: lendo conta por documento %s: %w", doc.Masked(), err))
+	}
+	return accountRow(row).toAccount()
+}
+
 // Statement lê até limit linhas do extrato, da mais recente para a mais antiga, com Seq
 // menor que before (0 = desde a mais recente). Não confere se a conta existe.
 func (s *Store) Statement(ctx context.Context, id account.ID, before int64, limit int32) ([]account.StatementLine, error) {

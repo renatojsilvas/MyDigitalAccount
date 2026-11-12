@@ -16,6 +16,7 @@ type LedgerService interface {
 	Credit(ctx context.Context, cmd account.CreditCommand) (account.Posting, error)
 	Debit(ctx context.Context, cmd account.DebitCommand) (account.Posting, error)
 	Account(ctx context.Context, id account.ID) (account.Account, error)
+	AccountByDocument(ctx context.Context, doc account.Document) (account.Account, error)
 	Balance(ctx context.Context, id account.ID) (account.Money, error)
 	Statement(ctx context.Context, id account.ID, cursor int64, pageSize int) (account.StatementPage, error)
 }
@@ -70,6 +71,19 @@ func (h *LedgerHandler) GetAccount(ctx context.Context, req *ledgerv1.GetAccount
 		return nil, err
 	}
 	return &ledgerv1.GetAccountResponse{Account: accountToProto(a)}, nil
+}
+
+// GetAccountByDocument busca a conta pelo CPF do titular.
+func (h *LedgerHandler) GetAccountByDocument(ctx context.Context, req *ledgerv1.GetAccountByDocumentRequest) (*ledgerv1.GetAccountByDocumentResponse, error) {
+	doc, err := account.ParseCPF(req.GetHolderDocument())
+	if err != nil {
+		return nil, err
+	}
+	a, err := h.svc.AccountByDocument(ctx, doc)
+	if err != nil {
+		return nil, err
+	}
+	return &ledgerv1.GetAccountByDocumentResponse{Account: accountToProto(a)}, nil
 }
 
 // movementInput são os campos comuns de Credit e Debit, já validados.

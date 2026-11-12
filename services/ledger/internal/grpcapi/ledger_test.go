@@ -111,6 +111,10 @@ func TestLedgerOverGRPC(t *testing.T) {
 		acc.GetAccount().GetHolderDocument() != "11144477735" {
 		t.Fatalf("GetAccount = %v, %v", acc, err)
 	}
+	byDoc, err := c.GetAccountByDocument(ctx, &ledgerv1.GetAccountByDocumentRequest{HolderDocument: "11144477735"})
+	if err != nil || byDoc.GetAccount().GetAccountId() != id {
+		t.Fatalf("GetAccountByDocument = %v, %v; want a conta %s", byDoc, err, id)
+	}
 	credit(t, c, id, 10_000)
 	debit, err := c.Debit(ctx, &ledgerv1.DebitRequest{
 		IdempotencyKey: key(), AccountId: id, AmountCents: 2_500,
@@ -223,6 +227,10 @@ func TestDomainErrorsOverGRPC(t *testing.T) {
 				Reason: ledgerv1.CreditReason_CREDIT_REASON_OPENING})
 			return err
 		}, codes.AlreadyExists, "ERROR_REASON_IDEMPOTENCY_KEY_REUSED"},
+		{"conta inexistente por CPF", func() error {
+			_, err := c.GetAccountByDocument(ctx, &ledgerv1.GetAccountByDocumentRequest{HolderDocument: "52998224725"})
+			return err
+		}, codes.NotFound, "ERROR_REASON_ACCOUNT_NOT_FOUND"},
 		{"extrato de conta inexistente", func() error {
 			_, err := c.ListStatement(ctx, &ledgerv1.ListStatementRequest{AccountId: missing})
 			return err
@@ -250,6 +258,9 @@ func (f fakeLedger) Debit(context.Context, account.DebitCommand) (account.Postin
 	return account.Posting{}, f.err
 }
 func (f fakeLedger) Account(context.Context, account.ID) (account.Account, error) {
+	return account.Account{}, f.err
+}
+func (f fakeLedger) AccountByDocument(context.Context, account.Document) (account.Account, error) {
 	return account.Account{}, f.err
 }
 func (f fakeLedger) Balance(context.Context, account.ID) (account.Money, error) {
@@ -283,6 +294,10 @@ func TestValidationOverGRPC(t *testing.T) {
 		}, "reason"},
 		{"CPF inválido", func() error {
 			_, err := c.OpenAccount(ctx, &ledgerv1.OpenAccountRequest{IdempotencyKey: "k", HolderName: "A", HolderDocument: "123"})
+			return err
+		}, "holder_document"},
+		{"CPF inválido na busca", func() error {
+			_, err := c.GetAccountByDocument(ctx, &ledgerv1.GetAccountByDocumentRequest{HolderDocument: "123"})
 			return err
 		}, "holder_document"},
 		{"sem nome", func() error {
