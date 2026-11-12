@@ -11,15 +11,9 @@ import (
 
 	"conta.local/ledger/internal/account"
 	"conta.local/ledger/internal/platform/postgres"
+	"conta.local/ledger/internal/platform/postgres/pgtest"
 	"conta.local/ledger/migrations"
 	"conta.local/testkit/testpg"
-)
-
-// Papel do serviço na instância de teste. A senha é a mesma em todos os testes porque o
-// papel é compartilhado pelo cluster (testpg.EnsureRole).
-const (
-	appRole     = "ledger_app"
-	appPassword = "ledger-app-test" //nolint:gosec // credencial só da instância de teste
 )
 
 const (
@@ -27,16 +21,11 @@ const (
 	codeInsufficientPrivilege = "42501"
 )
 
-// migrated cria um banco, aplica as migrations como dono e devolve um pool conectado como
-// ledger_app, o papel restrito do serviço.
+// migrated devolve um pool como ledger_app num banco já migrado.
 func migrated(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	db := testpg.New(t)
-	db.EnsureRole(t, appRole, appPassword)
-	if _, err := postgres.Migrate(t.Context(), fromTestDB(db), migrations.FS); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	return db.ConnectAs(t, appRole, appPassword)
+	_, pool := pgtest.Migrated(t, 0)
+	return pool
 }
 
 func pgError(t *testing.T, err error) *pgconn.PgError {
@@ -50,7 +39,7 @@ func pgError(t *testing.T, err error) *pgconn.PgError {
 
 func TestMigrateIsIdempotent(t *testing.T) {
 	db := testpg.New(t)
-	db.EnsureRole(t, appRole, appPassword)
+	db.EnsureRole(t, pgtest.AppRole, pgtest.AppPassword)
 	cfg := fromTestDB(db)
 
 	first, err := postgres.Migrate(t.Context(), cfg, migrations.FS)

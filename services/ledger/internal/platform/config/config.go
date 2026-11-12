@@ -30,6 +30,9 @@ type Postgres struct {
 	User     string
 	Password string
 	Database string
+	// LockTimeout limita a espera por um lock de linha (a conta travada por outro débito).
+	// Estourado, o Postgres cancela o comando e o cliente pode repetir com a mesma chave.
+	LockTimeout time.Duration
 }
 
 // Lookup tem a assinatura de os.LookupEnv. Receber a função, em vez de ler o ambiente
@@ -93,6 +96,15 @@ func loadPostgres(get func(key, def string) string) (Postgres, []error) {
 		errs = append(errs, fmt.Errorf("POSTGRES_PORT inválida: %w", err))
 	}
 	pg.Port = uint16(port)
+	lockTimeout, err := time.ParseDuration(get("LEDGER_DB_LOCK_TIMEOUT", "1s"))
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("LEDGER_DB_LOCK_TIMEOUT inválido: %w", err))
+	case lockTimeout < time.Millisecond:
+		// Zero no Postgres desliga o limite: espera infinita, justamente o que se quer evitar.
+		errs = append(errs, errors.New("LEDGER_DB_LOCK_TIMEOUT deve ser de pelo menos 1ms"))
+	}
+	pg.LockTimeout = lockTimeout
 	if pg.User == "" {
 		errs = append(errs, errors.New("LEDGER_DB_USER é obrigatória"))
 	}

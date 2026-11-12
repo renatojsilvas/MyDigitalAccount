@@ -2,6 +2,9 @@
 #   docker compose run --rm tools make <alvo>
 # Subir, parar e apagar o ambiente são comandos do docker compose (ver README).
 
+# Serviços com persistência: o sqlc gera o código Go das queries (fora do Git).
+SQLC_CONFIGS := $(wildcard services/*/sqlc.yaml)
+
 .PHONY: generate clean-gen proto-lint go-lint go-test ts-lint ts-test vuln obs-smoke obs-e2e lint test
 
 # Gera gen/ a partir de proto/ (ADR-0001), SOBRESCREVENDO os arquivos no lugar. Os modelos de
@@ -22,6 +25,7 @@ generate:
 	buf generate
 	cd gen/go && go mod tidy && go build ./...
 	pnpm --filter @conta/contracts build
+	@for f in $(SQLC_CONFIGS); do echo "==> sqlc generate $$f"; sqlc generate -f $$f || exit 1; done
 
 # Apaga o código gerado. Pare os serviços de desenvolvimento antes, ou reinicie-os depois.
 clean-gen:

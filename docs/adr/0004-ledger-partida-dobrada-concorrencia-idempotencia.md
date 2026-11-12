@@ -216,6 +216,18 @@ mistura duas convenções no mesmo serviço e faz cada cliente reimplementar o q
 - Ordem do extrato: `postings.id` é uma identidade gerada pelo banco. Como a conta fica travada durante o lançamento,
   as pernas de uma conta são inseridas em fila e o `id` segue a ordem em que o saldo mudou; ele é o cursor.
 
+**Persistência (passo 3b)**
+
+- **sqlc** com `pgx/v5`: queries em `services/ledger/internal/postgres/queries/`, conferidas contra o schema das
+  migrations. O código gerado (`internal/postgres/sqlcgen/`) fica fora do Git e é recriado por `make generate`,
+  pela mesma razão do `gen/` do `.proto` (ADR-0001). Alternativa descartada: ORM, que esconderia o `FOR UPDATE`, o
+  `ON CONFLICT` e a ordem dos comandos, justamente o que precisa ser explícito num ledger.
+- `Store.WithTx(ctx, fn)` abre a transação, faz commit se `fn` devolver `nil` e rollback em erro ou panic. As
+  operações que exigem transação (travar conta, lançar, idempotência) só existem no tipo `Tx`.
+- `lock_timeout` como parâmetro de sessão do pool (`LEDGER_DB_LOCK_TIMEOUT`, padrão 1s, mínimo 1ms). Lock timeout,
+  deadlock e falha de serialização voltam como erro com `Retryable() bool`; quem trata pergunta pelo comportamento,
+  sem importar o adaptador.
+
 **Atenção, semconv de RPC em evolução**: as convenções semânticas de RPC do OpenTelemetry ainda não são estáveis, e
 nomes de métricas e atributos já mudaram entre versões (o BFF e o ledger divergem justamente por isso). A unificação
 segue a versão que o `otelgrpc` do ledger emite hoje; a cada atualização do `otelgrpc` ou do SDK JS, conferir se os

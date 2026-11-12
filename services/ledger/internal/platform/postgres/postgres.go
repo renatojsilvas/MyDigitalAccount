@@ -4,6 +4,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -49,5 +50,10 @@ func poolConfig(cfg config.Postgres) (*pgxpool.Config, error) {
 	pc.ConnConfig.Password = cfg.Password
 	pc.ConnConfig.Database = cfg.Database
 	pc.ConnConfig.ConnectTimeout = connectTimeout
+	if cfg.LockTimeout > 0 {
+		// Parâmetro da sessão, enviado na conexão: vale para todo comando sem custar um SET
+		// por transação.
+		pc.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(cfg.LockTimeout.Milliseconds(), 10)
+	}
 	return pc, nil
 }
