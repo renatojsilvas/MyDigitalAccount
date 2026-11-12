@@ -91,7 +91,7 @@ services:
       dockerfile: services/ledger/Dockerfile
       target: dev
       additional_contexts:
-        tools: service:tools
+        tools: docker-image://conta-digital/tools:dev
     working_dir: /workspace/services/ledger
     environment:
       ENVIRONMENT: development
@@ -126,7 +126,7 @@ services:
       dockerfile: services/ledger/Dockerfile
       target: dev
       additional_contexts:
-        tools: service:tools
+        tools: docker-image://conta-digital/tools:dev
     working_dir: /workspace/services/ledger
     command: ["go", "run", "./cmd/ledger", "migrate"]
     restart: "no"
@@ -152,7 +152,7 @@ services:
       dockerfile: bff/Dockerfile
       target: dev
       additional_contexts:
-        tools: service:tools
+        tools: docker-image://conta-digital/tools:dev
     working_dir: /workspace/bff
     environment:
       ENVIRONMENT: development

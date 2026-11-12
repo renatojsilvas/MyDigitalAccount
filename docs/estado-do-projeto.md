@@ -210,9 +210,12 @@ novos; falha = só falha do servidor) e **"Conta Digital: ledger"** (RED, negóc
 ## 8. Pendências e dívidas conhecidas
 
 **Para você fechar**
-- O CI e o `.devcontainer` **nunca rodaram** no GitHub (instabilidade do Actions); o workflow passa no `actionlint`.
-  Quando ficar verde, registrar aqui. Ao rodar, **recalibrar os thresholds do k6** com o artefato `k6-ledger-baseline`
-  do runner (os atuais vêm do Mac).
+- **CI no GitHub** (primeira execução, Fase 1): "Lint e testes" ficou **verde**. Os jobs "Critério de pronto" e "Gate
+  de desempenho" falharam no `docker compose up` (`service "bff" declares unknown service "tools" as additional
+  contexts`): o `additional_contexts` usava `service:tools`, e o `tools` está num profile inativo no `up` do CI.
+  Corrigido para `docker-image://conta-digital/tools:dev` (commit separado; conferido localmente do zero, com
+  `-p ci-clean` e volumes novos). **Falta**: ver esses dois jobs verdes no GitHub e então **recalibrar os thresholds
+  do k6** com o artefato `k6-ledger-baseline` do runner (os atuais vêm do Mac). O `.devcontainer` ainda não rodou.
 
 **Para a Fase 2 (decidir no início dela)**
 - **Login de demonstração precisa achar a conta do usuário**: os `account_id` mudam se o banco for recriado. Opções:

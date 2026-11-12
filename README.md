@@ -52,6 +52,12 @@ parar e apagar o ambiente são comandos diretos do Compose, porque o `tools` nã
 | Parar e apagar os dados | `docker compose --profile '*' down -v` |
 | Parar **tudo**, inclusive o Postgres de teste | `docker compose --profile '*' down` |
 
+**A imagem `tools` precisa existir antes do `up`.** Os Dockerfiles de desenvolvimento do ledger e do BFF
+copiam as ferramentas dela (`additional_contexts` apontando para `docker-image://conta-digital/tools:dev`). Não
+dá para apontar para o *serviço* `tools`: ele está num profile próprio, e um profile inativo é, para o Compose, um
+serviço inexistente (foi o que quebrou o `up` no CI). O `make generate` (ou `docker compose build tools`) já
+constrói a imagem, e ele é o primeiro passo de qualquer fluxo, local ou de CI.
+
 Experimente:
 
 ```bash
