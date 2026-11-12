@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { hasZodFastifySchemaValidationErrors } from "fastify-type-provider-zod";
+import { PROBLEM_CONTENT_TYPE } from "../problem-schema.js";
 import { problem, problemOf, type BffError, type ProblemResponse } from "../errors.js";
 
 function send(request: FastifyRequest, reply: FastifyReply, p: ProblemResponse): FastifyReply {
@@ -8,7 +9,7 @@ function send(request: FastifyRequest, reply: FastifyReply, p: ProblemResponse):
   return reply
     .status(p.status)
     .headers(p.headers)
-    .type("application/problem+json")
+    .type(PROBLEM_CONTENT_TYPE)
     .send(traceId === undefined ? p.body : { ...p.body, trace_id: traceId });
 }
 

@@ -66,7 +66,8 @@ Num checkout limpo da Fase 1, `make lint test` passava em 62 s.
   - **Aquecimento no boot**: antes de aceitar tráfego, `start()` faz um ping ao ledger (`warmUp`), com o prazo
     `LEDGER_TIMEOUT_MS` e sem nunca falhar o boot; o `/readyz` continua sem consultar o ledger. Mediu-se (3 reinícios):
     1º login 60 a 125 ms (antes: 504 em mais de 1 s) e 1º `/home` 14 a 32 ms (antes: ~318 ms).
-  - OpenAPI gerado dos schemas Zod: `gen/openapi/bff.json` (`make generate`); sondas de saúde ficam fora.
+  - OpenAPI gerado dos schemas Zod: `gen/openapi/bff.json` (`make generate`); sondas de saúde ficam fora; erros
+    descritos como `application/problem+json`, sucessos como `application/json`.
   - Erros em `application/problem+json` (RFC 9457) com `trace_id`; toda resposta traz `x-trace-id`. O `traceparent` de
     entrada **não é continuado**: vira um span link num trace novo (ADR-0006).
 - **web** (React 19 + Vite 8, TypeScript estrito), front de demonstração: login por CPF digitado e tela Home. Tipos e
@@ -315,7 +316,6 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
   refresh de token (15 min e volta ao login).
 - `GET /ping` continua **público** e chama o ledger; rate limit só na Fase 6.
 - O BFF não cancela as chamadas ao ledger quando o cliente desconecta (elas terminam no prazo).
-- OpenAPI descreve os erros como `application/json`, mas o BFF responde `application/problem+json` (sem efeito nos tipos).
 - `openapi-typescript` 7.13 declara peer `typescript ^5`; o projeto usa 6.0.3 e funciona (conferido), mas gera aviso em
   `pnpm peers check`.
 - O SLI da home no dashboard usa a fronteira de 250 ms do histograma; para medir 300 ms exatos seria preciso incluir essa
@@ -337,7 +337,8 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
 - `psql` da imagem `tools` é o 15 contra servidor 18 (use `docker compose exec postgres psql`).
 - `gen/` e `sqlcgen/` são pré-requisito do build das imagens finais; exportação de telemetria opt-in; `service.version` = `dev`.
 
-**Resolvidas na Fase 2**: partida a frio do BFF (aquecimento da conexão com o ledger no boot, medido); teste instável do BFF (era o `grpc-wire.test.ts`: 11 falhas em 13 execuções sob CPU
+**Resolvidas na Fase 2**: OpenAPI descreve os erros como `application/problem+json` (testado contra o `content-type` real);
+partida a frio do BFF (aquecimento da conexão com o ledger no boot, medido); teste instável do BFF (era o `grpc-wire.test.ts`: 11 falhas em 13 execuções sob CPU
 disputada; a causa era um prazo de 150 ms numa conexão HTTP/2 real e fria, que não fazia parte do que o teste prova;
 agora os caminhos de sucesso usam prazo de 10 s e os de timeout usam um handler que nunca responde, `hang`, com prazo
 curto; paralelismo e isolamento de prazos são provados com barreira e portão, sem `sleep`; 0 falhas em 20 execuções

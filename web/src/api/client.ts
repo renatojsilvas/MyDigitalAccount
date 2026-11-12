@@ -29,4 +29,5 @@ export type Api = ReturnType<typeof createApi>;
 
 /** Tipos de resposta tirados do contrato gerado, nunca escritos à mão. */
 export type HomeView = paths["/home"]["get"]["responses"]["200"]["content"]["application/json"];
-export type Problem = paths["/home"]["get"]["responses"]["503"]["content"]["application/json"];
+export type Problem =
+  paths["/home"]["get"]["responses"]["503"]["content"]["application/problem+json"];

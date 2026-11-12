@@ -77,4 +77,35 @@ describe("OpenAPI gerado dos schemas", () => {
     const doc = await openapi(testConfig({ ENVIRONMENT: "production" }));
     expect(Object.keys(doc.paths as Json)).not.toContain("/auth/demo-login");
   });
+
+  it("os erros são descritos como application/problem+json; os sucessos, como application/json", async () => {
+    const doc = await openapi();
+    const paths = doc.paths as Record<string, Record<string, { responses: Record<string, Json> }>>;
+    let errors = 0;
+    for (const [path, methods] of Object.entries(paths)) {
+      for (const [method, op] of Object.entries(methods)) {
+        for (const [status, response] of Object.entries(op.responses)) {
+          const types = Object.keys(response.content ?? {});
+          const expected = status.startsWith("2")
+            ? ["application/json"]
+            : ["application/problem+json"];
+          expect(types, `${method.toUpperCase()} ${path} ${status}`).toEqual(expected);
+          if (!status.startsWith("2")) errors++;
+        }
+      }
+    }
+    expect(errors).toBeGreaterThan(0);
+  });
+
+  it("o content-type documentado é o que o BFF de fato devolve", async () => {
+    h = createHarness(undefined, testConfig(), { ledger: {} });
+    const res = await h.app.inject({ url: "/home" }); // sem token: 401
+    const doc = h.app.swagger() as unknown as {
+      paths: Record<string, Record<string, { responses: Record<string, { content: Json }> }>>;
+    };
+    const documented = Object.keys(doc.paths["/home"]?.get?.responses["401"]?.content ?? {});
+    expect(res.statusCode).toBe(401);
+    expect(documented).toEqual(["application/problem+json"]);
+    expect(res.headers["content-type"]).toContain(documented[0]);
+  });
 });
