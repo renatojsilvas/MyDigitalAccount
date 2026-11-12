@@ -1,6 +1,6 @@
 # Estado do projeto
 
-Atualizado ao fim da **Fase 1 (Ledger)**, em 2026-11-12. Leia este arquivo no início de cada fase.
+Atualizado ao fim da **Fase 2 (BFF "home")**, em 2026-11-12. Leia este arquivo no início de cada fase.
 Referências: `docs/plano-conta-digital.md` (plano), `docs/arquitetura-conta-digital.md` (diagrama),
 `docs/adr/` (decisões), `load/README.md` (gate de desempenho).
 
@@ -10,8 +10,27 @@ Referências: `docs/plano-conta-digital.md` (plano), `docs/arquitetura-conta-dig
 |---|---|
 | 0. Fundação | **Concluída** |
 | 1. Ledger (Go) | **Concluída** |
-| 2. BFF "home" (TS) | Próxima |
-| 3 a 8 | Pendentes |
+| 2. BFF "home" (TS) | **Concluída** |
+| 3. Transfers e antifraude (Go) | Próxima |
+| 4 a 8 | Pendentes |
+
+**Critério de pronto da Fase 2**, verificado:
+
+1. **Com o extrato lento ou fora do ar, a `/home` responde 200 com o saldo e o extrato `unavailable`**:
+   `bff/test/home.test.ts` (extrato lento: estoura os 80 ms dos testes; fora do ar) e `home-service.test.ts`. Contra
+   a stack real, com `LEDGER_STATEMENT_TIMEOUT_MS=1`: resposta 200 com `statement: {status:"unavailable",
+   reason:"timeout"}`.
+2. **Aparece no contador e no trace**: `bff_home_degraded_total{home_section="statement",
+   home_degraded_reason="timeout"}` no Prometheus; no Tempo, `GET /home` com `home.degraded=true`, `ListStatement`
+   com `DEADLINE_EXCEEDED` no BFF **e no ledger** (o prazo é propagado) e `GetBalance` OK. O teste de unidade confere
+   o mesmo (contador, atributo, evento e status do span do cliente).
+3. **No navegador**, a Home mostra o saldo e um aviso no lugar do extrato: coberto pelo teste `Home.test.tsx`
+   ("com o extrato indisponível..."). **A conferência visual no navegador fica com você** (a extensão do Chrome não
+   conectou nesta sessão): `http://127.0.0.1:5173`, CPF `12345678909`; para forçar o aviso, suba o BFF com
+   `LEDGER_STATEMENT_TIMEOUT_MS=1`.
+
+`make lint test`: Go com 12 pacotes (`-race`), BFF com 116 testes Vitest, web com 13. Uma execução completa teve 1
+teste do BFF falhando sem que eu identificasse qual (ver seção 8); 5 execuções seguintes passaram.
 
 **Critério de pronto da Fase 1**, verificado:
 
@@ -22,8 +41,7 @@ Referências: `docs/plano-conta-digital.md` (plano), `docs/arquitetura-conta-dig
    *lost update* (registrado no ADR-0004).
 2. **O gate do k6 passa** (`load/ledger-baseline.js`, código 0) e reprova quando um limite é violado (código 99).
 
-Num checkout limpo (sem `gen/`, `sqlcgen/` nem `node_modules`), `make lint test` passa em 62 s: Go com 12 pacotes
-(`-race`), BFF com 49 testes Vitest.
+Num checkout limpo da Fase 1, `make lint test` passava em 62 s.
 
 ## 2. O que existe
 
@@ -37,16 +55,54 @@ Num checkout limpo (sem `gen/`, `sqlcgen/` nem `node_modules`), `make lint test`
     privilégio); migrations embutidas no binário e aplicadas pelo job `ledger-migrate`.
   - Seed de 4 contas de demonstração (`make seed`), pela API, idempotente.
   - Observabilidade: RED do gRPC, spans e métricas do `pgx`, USE do pool, métricas de negócio, dashboard próprio.
-- **bff** (TypeScript, Fastify): ainda só `GET /ping` (Fase 0). Na Fase 1 mudaram apenas os nomes da telemetria do
-  cliente gRPC (semconv v1.43, iguais aos do ledger).
-- **Infra**: profiles `core` (Postgres, ledger-migrate, ledger, bff), `obs` (Collector, Prometheus, Tempo, Loki,
+- O ledger ganhou, na Fase 2, a RPC `GetAccountByDocument` (busca a conta pelo CPF; leitura, aditiva).
+- **bff** (TypeScript, Fastify), serviço da Fase 2:
+  - `GET /home` (autenticada): saldo + últimas 10 transações, em duas chamadas paralelas ao ledger. Saldo é essencial
+    (falha = 504/503/502, ou 401 se a conta do token não existe mais); extrato é opcional (falha = 200 com
+    `statement.status = "unavailable"` e o motivo `timeout | unavailable | error`).
+  - `POST /auth/demo-login` (só `development` e `test`; em production a rota não existe e o boot falha se for
+    ligada): CPF → `GetAccountByDocument` → JWT HS256 (`sub` = `account_id`, 15 min, sem CPF no token).
+  - `GET /ping` continua (diagnóstico da Fase 0, **público**).
+  - OpenAPI gerado dos schemas Zod: `gen/openapi/bff.json` (`make generate`); sondas de saúde ficam fora.
+  - Erros em `application/problem+json` (RFC 9457) com `trace_id`; toda resposta traz `x-trace-id`. O `traceparent` de
+    entrada **não é continuado**: vira um span link num trace novo (ADR-0006).
+- **web** (React 19 + Vite 8, TypeScript estrito), front de demonstração: login por CPF digitado e tela Home. Tipos e
+  cliente (`openapi-fetch`) gerados do OpenAPI do BFF. Só imagem de desenvolvimento (sem imagem final).
+- **Infra**: profiles `core` (Postgres, ledger-migrate, ledger, bff, **web**), `obs` (Collector, Prometheus, Tempo, Loki,
   Grafana), `load` (k6), `tools`/`test` (imagem de ferramentas e Postgres de teste).
-- **Não existe ainda**: autenticação, `transfers`, `antifraude`, `spi-fake`, `notifications`, `reconciler`, Kafka, Redis,
-  front-end, Alertmanager, runbooks.
+- **Não existe ainda**: `transfers`, `antifraude`, `spi-fake`, `notifications`, `reconciler`, Kafka, Redis, telas Novo
+  Pix e Acompanhar Pix, Alertmanager, runbooks.
 
 ## 3. Árvore de arquivos (versionados)
 
-Só o que mudou ou nasceu na Fase 1; o resto segue como na Fase 0 (ver o histórico deste arquivo no Git).
+Só o que mudou ou nasceu nas Fases 1 e 2; o resto segue como na Fase 0 (ver o histórico deste arquivo no Git).
+
+**Fase 2:**
+
+```
+proto/google/rpc/                          error_details.proto e status.proto do googleapis (commit fixado, README.md);
+                                             geram SÓ TypeScript; fora do buf lint/format/breaking
+buf.gen.yaml / buf.gen.ts.yaml             Go (exclui proto/google) e TypeScript (tudo), dois modelos
+bff/src/
+  config.ts                                + BFF_JWT_SECRET (>= 32, sem padrão), BFF_JWT_TTL_SECONDS, BFF_DEMO_LOGIN,
+                                             LEDGER_BALANCE_TIMEOUT_MS (250), LEDGER_STATEMENT_TIMEOUT_MS (200)
+  clients/ledger.ts                        adaptador do ledger: único que conhece gRPC; lê o ErrorInfo gerado
+  errors.ts, problem-schema.ts             DependencyError, UnauthenticatedError, BffError; Problem (RFC 9457)
+  modules/home/                            schema (Zod), mapper (bigint -> int), service (allSettled), observe, route
+  modules/auth/                            schema, service, route (POST /auth/demo-login)
+  plugins/auth.ts, openapi.ts              JWT (@fastify/jwt) e OpenAPI (@fastify/swagger)
+  plugins/telemetry.ts                     span raiz + link do traceparent de entrada + x-trace-id
+bff/scripts/generate-openapi.ts            grava gen/openapi/bff.json
+bff/test/                                  fake-ledger.ts (ledger gRPC falso), auth, home, home-service, ledger-client,
+                                             openapi, error-info (gRPC real) e os anteriores
+web/                                       React + Vite; src/api/client.ts (cliente tipado), src/screens/{Login,Home},
+                                             src/money.ts; src/api/schema.d.ts é GERADO (fora do Git)
+deploy/grafana/dashboards/bff.json         dashboard "Conta Digital: BFF"
+docs/adr/0005-bff-papel-e-degradacao-parcial.md
+docs/adr/0006-login-de-demonstracao-jwt-e-traceparent.md
+```
+
+**Fase 1:**
 
 ```
 proto/conta/ledger/v1/ledger.proto        contrato do ledger (seção 4)
@@ -75,12 +131,15 @@ docs/adr/0004-ledger-partida-dobrada-concorrencia-idempotencia.md
 
 `proto/conta/ping/v1/ping.proto`: inalterado desde a Fase 0 (`PingService.Ping`).
 
-`proto/conta/ledger/v1/ledger.proto` (pacote `conta.ledger.v1`), resumo:
+`proto/google/rpc/{error_details,status}.proto`: de terceiros (googleapis), só para o BFF decodificar o `ErrorInfo`.
+
+`proto/conta/ledger/v1/ledger.proto` (pacote `conta.ledger.v1`), resumo (na Fase 2 ganhou `GetAccountByDocument`):
 
 ```proto
 service LedgerService {
   rpc OpenAccount(OpenAccountRequest) returns (OpenAccountResponse);   // idempotency_key, holder_name, holder_document (CPF)
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);      // account_id
+  rpc GetAccountByDocument(GetAccountByDocumentRequest) returns (GetAccountByDocumentResponse); // holder_document (CPF)
   rpc Credit(CreditRequest) returns (CreditResponse);                  // idempotency_key, account_id, amount_cents, reason, description
   rpc Debit(DebitRequest) returns (DebitResponse);                     // idem, com DebitReason
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);      // account_id -> balance_cents
@@ -133,6 +192,7 @@ Valores em centavos (`int64`), sempre positivos. Erros: status gRPC canônico + 
 - Compose por grupo, incluído pela raiz e autocontido; portas publicadas só em `127.0.0.1` por `*_HOST_PORT`.
 - Testes de integração: serviços de teste no compose (opção B), isolamento por banco (`testkit/testpg`).
 - Testes de falha das fases 3 e 4 (Redis e Kafka fora do ar) usarão o Toxiproxy, que só entra na Fase 3.
+- O contexto `tools` dos Dockerfiles é `docker-image://conta-digital/tools:dev`, não `service:tools` (profile inativo = serviço inexistente no `up` do CI); a imagem precisa existir antes do `up` (`make generate` a constrói).
 
 **ADR-0004, ledger: partida dobrada, concorrência e idempotência**
 - Partida dobrada com contas internas **por finalidade** (`opening_balance` para o seed, `settlement` para o SPI); quem chama informa o motivo (enum), o ledger escolhe a contrapartida.
@@ -148,15 +208,38 @@ Valores em centavos (`int64`), sempre positivos. Erros: status gRPC canônico + 
 - `otelpgx` v0.13.0 para spans e métricas do pool; sem parâmetros nos spans; métricas de negócio por uma porta `Observer`.
 - Rótulo de status gRPC unificado entre BFF e ledger na semconv v1.43 (`rpc.response.status_code` por nome); a semconv de RPC ainda evolui.
 
+**ADR-0005, BFF: papel, limites e degradação parcial**
+- O BFF agrega, adapta e protege; não calcula valor, não decide permissão, não guarda dado de negócio nem cacheia saldo.
+- Duas fontes escritas à mão: o `.proto` e o schema Zod. O resto é gerado (`protoc-gen-es`, OpenAPI, `openapi-typescript`).
+- `clients/ledger.ts` é a *anti-corruption layer*: o resto do BFF não vê gRPC nem `bigint` além do mapper.
+- Saldo essencial (falha = erro; conta do token inexistente = 401), extrato opcional (200 + `unavailable` + motivo, união discriminada).
+- Chamadas em paralelo, cada uma com o prazo próprio (250/200 ms, menores que o SLO de 300 ms), propagado ao ledger.
+- `bigint` -> inteiro com guarda de inteiro seguro; estourar é falha, nunca arredondamento.
+
+**ADR-0006, login de demonstração, JWT e `traceparent`**
+- Login acha a conta pela RPC `GetAccountByDocument` do ledger (o BFF não guarda mapeamento); o front pede o CPF digitado.
+- JWT HS256 com algoritmo fixado dos dois lados, `iss`/`aud`, 15 min, `sub` = `account_id`, sem CPF; segredo em variável de ambiente validada no boot.
+- Login de demonstração só em `development`/`test`; em production a rota não existe e o boot falha se for ligada. CPF sem conta = 401.
+- `traceparent` de entrada não é confiável: o BFF abre trace novo (raiz) e guarda o contexto recebido como span link; `x-trace-id` na resposta.
+- `google.rpc` do googleapis copiado e fixado por commit, gerado só em TypeScript (o Go usa o `errdetails` do `genproto`).
+
 ## 6. Como rodar e testar
 
 ```bash
-cp .env.example .env     # HOST_UID/HOST_GID (id -u, id -g); LEDGER_DB_OWNER_PASSWORD e LEDGER_DB_APP_PASSWORD
+cp .env.example .env     # HOST_UID/HOST_GID (id -u, id -g); LEDGER_DB_*_PASSWORD; BFF_JWT_SECRET (obrigatório, >= 32)
 docker compose run --rm tools make lint test                       # lint e testes (gera gen/ e sqlcgen/ antes)
-docker compose --profile core up -d --build                        # Postgres, ledger-migrate (job), ledger, bff
+docker compose --profile core up -d --build                        # Postgres, ledger-migrate (job), ledger, bff, web
 docker compose run --rm tools make seed                            # 4 contas de demonstração (idempotente)
 docker compose run --rm tools grpcurl -plaintext -import-path proto -proto conta/ledger/v1/ledger.proto \
   -d '{"account_id":"<id>"}' ledger:50051 conta.ledger.v1.LedgerService/GetBalance
+
+# Fase 2: front, login e home (depois do seed)
+open http://127.0.0.1:5173                                         # login com um CPF do seed (ex.: 12345678909)
+curl -s -X POST localhost:8088/auth/demo-login -H 'content-type: application/json' -d '{"document":"12345678909"}'
+curl -s localhost:8088/home -H "authorization: Bearer <accessToken>"
+# Forçar o extrato degradado (reinicia o BFF com um prazo de 1 ms para o extrato):
+LEDGER_STATEMENT_TIMEOUT_MS=1 docker compose --profile core up -d --wait bff
+docker compose run --rm tools make generate                        # inclui gen/openapi/bff.json e web/src/api/schema.d.ts
 
 # Critério de pronto da Fase 1
 docker compose run --rm tools sh -c 'cd services/ledger && go test -race -count=1 -v -run Concurrent ./internal/account/'
@@ -170,7 +253,8 @@ docker compose run --rm tools make obs-e2e
 docker compose --profile core down && docker volume rm conta-digital_postgres-data
 ```
 
-Contas de demonstração (CPFs fictícios): Ana 123.456.789-09 (R$ 5.000,00), Bruno 987.654.321-00 (R$ 1.500,00),
+Atenção: a **primeira** chamada ao ledger depois que o BFF sobe é lenta (partida a frio, seção 8): se o login der 504,
+repita. Contas de demonstração (CPFs fictícios): Ana 123.456.789-09 (R$ 5.000,00), Bruno 987.654.321-00 (R$ 1.500,00),
 Carla 111.444.777-35 (R$ 250,00), Diego 000.000.001-91 (R$ 0,00). Os `account_id` são UUIDv7 gerados pelo ledger:
 saem no log do `make seed` e **mudam se o banco for recriado**.
 
@@ -186,6 +270,7 @@ CI (job `load-baseline`; thresholds e origem em `load/README.md`).
 | BFF | `http_server_request_duration_seconds_*` | `http_request_method`, `http_route`, `http_response_status_code` |
 | BFF | `rpc_client_call_duration_seconds_*` | `dependency`, `rpc_system_name`, `rpc_method` (completo), `rpc_response_status_code` (nome) |
 | BFF | `nodejs_eventloop_delay_p99_seconds`, `nodejs_heap_used_bytes` | |
+| BFF | `bff_home_degraded_total` (contador de respostas da home degradadas) | `home_section` (statement), `home_degraded_reason` (timeout, unavailable, error) |
 | ledger | `rpc_server_call_duration_seconds_*` | `rpc_system_name`, `rpc_method` (completo), `rpc_response_status_code` (nome) |
 | ledger | `db_client_operation_duration_seconds_*` | `db_system_name`, `pgx_operation_type` (query, prepare, connect) |
 | ledger | `pgxpool_acquired_connections`, `pgxpool_idle_connections`, `pgxpool_max_connections`, `pgxpool_total_connections` | `db_client_connection_pool_name` |
@@ -201,11 +286,18 @@ lançamento, pernas, saldo, gravação do resultado, `COMMIT`), sem valores de p
 `ledger.operation`, `ledger.outcome`, `ledger.reason`, `ledger.rejection` e `ledger.account_id` (só no span, nunca em
 rótulo). O `/readyz` não gera spans.
 
+**Traces (BFF)**: `GET /home` é raiz (o `traceparent` de entrada vira link); com extrato degradado tem
+`home.degraded=true` e o evento `home.degraded`; o span do cliente que estourou o prazo fica com erro
+(`DEADLINE_EXCEEDED`), e o do ledger também. Rotas autenticadas levam `enduser.id` (= `account_id`, nunca CPF).
+
 **Logs**: JSON no stdout e OTLP para o Loki, com `trace_id` e `span_id`; um por chamada gRPC; erros internos trazem a
 causa. CPF mascarado na origem (o tipo `account.Document` só sai formatado como `***.456.789-**`).
 
 **Dashboards**: "Conta Digital: visão geral" (Fase 0, painéis do ledger visto pelo BFF atualizados para os nomes
-novos; falha = só falha do servidor) e **"Conta Digital: ledger"** (RED, negócio, USE do pool, logs, traces de escrita).
+novos; falha = só falha do servidor) **"Conta Digital: ledger"** (RED, negócio, USE do pool, logs, traces de escrita) e **"Conta Digital: BFF"** (SLI da home
+contra o SLO da seção 7.3, home degradada, home por status, RED por rota, degradação por motivo, timeouts do ledger,
+falhas e latência da dependência, event loop e heap, logs, traces de home degradada). O título "(Fase 0)" do visão
+geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 ms): é conservador.
 
 ## 8. Pendências e dívidas conhecidas
 
@@ -217,10 +309,30 @@ novos; falha = só falha do servidor) e **"Conta Digital: ledger"** (RED, negóc
   `-p ci-clean` e volumes novos). **Falta**: ver esses dois jobs verdes no GitHub e então **recalibrar os thresholds
   do k6** com o artefato `k6-ledger-baseline` do runner (os atuais vêm do Mac). O `.devcontainer` ainda não rodou.
 
-**Para a Fase 2 (decidir no início dela)**
-- **Login de demonstração precisa achar a conta do usuário**: os `account_id` mudam se o banco for recriado. Opções:
-  uma RPC de consulta por CPF no ledger (mudança de contrato, não quebra) ou o BFF manter o mapeamento.
-- O BFF vai precisar do tipo `google.rpc.ErrorInfo` gerado em TypeScript para ler os detalhes dos erros do ledger.
+**Decisões pendentes da Fase 2 (suas)**
+- **Partida a frio do BFF**: a primeira chamada ao ledger depois que o BFF sobe leva ~300 ms (`/home`) a mais de 1 s
+  (login, que deu 504), e as seguintes 10 a 25 ms. Com 250/200 ms, o primeiro `/home` pode vir com extrato `timeout`.
+  Opções: aquecer o ledger (ping) no boot sem entrar na prontidão (recomendada), prazo maior na primeira chamada, ou
+  calibrar na Fase 7. O `/readyz` não consulta o ledger (ADR-0002).
+- **Sem imagem final do `web`** (só `dev`, com o proxy do Vite): foge da regra de imagem final por serviço. Se quiser,
+  nginx não-root com digest fixado.
+- **Teste do BFF instável uma vez** sob carga (115/116 numa execução completa; não identifiquei qual). Suspeitos: testes
+  com folga de 20 a 30 ms (`ledger-client.test.ts`, `home.test.ts`). Ampliar as folgas se reaparecer.
+- **`BFF_JWT_SECRET` no seu `.env`** (obrigatório; valor de desenvolvimento no `.env.example`). Sem ele, nenhum
+  `docker compose` funciona. O CI copia o `.env.example`, então não é afetado.
+
+**Dívidas novas da Fase 2**
+- O front guarda o token em `sessionStorage` (demonstração); produção usaria cookie HttpOnly emitido pelo BFF. Sem
+  refresh de token (15 min e volta ao login).
+- `GET /ping` continua **público** e chama o ledger; rate limit só na Fase 6.
+- O BFF não cancela as chamadas ao ledger quando o cliente desconecta (elas terminam no prazo).
+- OpenAPI descreve os erros como `application/json`, mas o BFF responde `application/problem+json` (sem efeito nos tipos).
+- `openapi-typescript` 7.13 declara peer `typescript ^5`; o projeto usa 6.0.3 e funciona (conferido), mas gera aviso em
+  `pnpm peers check`.
+- O SLI da home no dashboard usa a fronteira de 250 ms do histograma; para medir 300 ms exatos seria preciso incluir essa
+  fronteira nos buckets.
+- Os dados de login (CPF no corpo do `POST /auth/demo-login`) nunca vão a log, span ou métrica (testado), mas o ledger
+  recebe o CPF em `GetAccountByDocument`: é a mesma proteção da Fase 1 (mascarado na origem).
 
 **Para fases seguintes**
 - Estorno (novo lançamento invertido, motivo novo no enum) e referência externa no lançamento (ID da transferência),
@@ -232,11 +344,13 @@ novos; falha = só falha do servidor) e **"Conta Digital: ledger"** (RED, negóc
 
 **Técnicas (herdadas da Fase 0, ainda abertas)**
 - Retenção de 48 h do Tempo não observada na prática; CI sem cache de camadas da imagem `tools`.
-- O interceptor Connect do BFF só instrumenta chamadas unárias; `traceparent` de entrada aceito de qualquer cliente
-  (rever nas Fases 2 e 6).
+- O interceptor Connect do BFF só instrumenta chamadas unárias.
 - `psql` da imagem `tools` é o 15 contra servidor 18 (use `docker compose exec postgres psql`).
 - `gen/` e `sqlcgen/` são pré-requisito do build das imagens finais; exportação de telemetria opt-in; `service.version` = `dev`.
-- O título do dashboard "visão geral" ainda diz "(Fase 0)".
+
+**Resolvidas na Fase 2**: login de demonstração acha a conta (RPC no ledger); `ErrorInfo` gerado em TypeScript;
+`traceparent` de entrada deixou de ser confiado (revisto com a autenticação); título do dashboard "visão geral"; CI do
+GitHub corrigido (`additional_contexts`).
 
 **Resolvidas na Fase 1**: papel Postgres próprio do ledger; spans do `pgx` e métricas do pool; rótulo de status gRPC
 unificado entre BFF e ledger; teste do ping que oscilava (espera com prazo).
@@ -250,6 +364,7 @@ unificado entre BFF e ledger; teste do ping que oscilava (espera com prazo).
 
 ## 9. Próxima fase
 
-**Fase 2: BFF "home" (TS)**, modelo recomendado na seção 8 do plano. Começa pelo prompt da Fase 2 e pela decisão de
-como o login de demonstração encontra a conta (seção 8 acima). Reaproveita: o contrato `conta.ledger.v1`
-(`GetBalance`, `ListStatement`), o seed (`make seed`), o cliente Connect e o interceptor de telemetria do BFF.
+**Fase 3: Transfers e antifraude (Go)**, modelo recomendado na seção 8 do plano; começa pelo prompt da Fase 3. Reaproveita
+o ledger (débito, crédito, idempotência), o padrão de erros (`ErrorInfo`), o BFF (a `/home` ganha os limites, em seção
+própria com `status`, como o extrato) e o Toxiproxy, que entra nessa fase. Pendências do ledger que a Fase 3 resolve:
+estorno e referência externa no lançamento. Antes de começar, resolva as decisões da seção 8 (partida a frio, `.env`).

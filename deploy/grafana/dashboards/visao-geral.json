@@ -1,6 +1,6 @@
 {
   "uid": "conta-visao-geral",
-  "title": "Conta Digital: visão geral (Fase 0)",
+  "title": "Conta Digital: visão geral",
   "description": "RED do BFF, a dependência ledger vista pelo BFF, RED do ledger, recursos (USE), logs e traces. Provisionado como código: edite o JSON, não a interface.",
   "tags": ["conta-digital", "fase-0"],
   "timezone": "browser",
