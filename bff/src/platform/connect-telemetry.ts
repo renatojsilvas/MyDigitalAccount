@@ -42,8 +42,39 @@ export interface ClientTelemetryDeps {
  *  3. registra a latência e o erro por dependência.
  * Só chamadas unárias são instrumentadas; streaming apenas propaga o traceparent.
  */
+/**
+ * Nome canônico de cada código gRPC, como o `otelgrpc` do ledger emite em
+ * `rpc.response.status_code` (semconv de RPC v1.43.0). Os códigos do Connect são
+ * numericamente iguais aos do gRPC.
+ */
+const GRPC_STATUS_NAMES: readonly string[] = [
+  "OK",
+  "CANCELLED",
+  "UNKNOWN",
+  "INVALID_ARGUMENT",
+  "DEADLINE_EXCEEDED",
+  "NOT_FOUND",
+  "ALREADY_EXISTS",
+  "PERMISSION_DENIED",
+  "RESOURCE_EXHAUSTED",
+  "FAILED_PRECONDITION",
+  "ABORTED",
+  "OUT_OF_RANGE",
+  "UNIMPLEMENTED",
+  "INTERNAL",
+  "UNAVAILABLE",
+  "DATA_LOSS",
+  "UNAUTHENTICATED",
+];
+
+export function grpcStatusName(code: number): string {
+  return GRPC_STATUS_NAMES[code] ?? "UNKNOWN";
+}
+
 export function createClientTelemetryInterceptor(deps: ClientTelemetryDeps): Interceptor {
-  const duration = deps.meter.createHistogram("rpc.client.duration", {
+  // Nomes da semconv de RPC v1.43.0, os mesmos que o otelgrpc usa no ledger (ADR-0004,
+  // seção 6): a convenção ainda evolui; confira a cada atualização do SDK.
+  const duration = deps.meter.createHistogram("rpc.client.call.duration", {
     unit: "s",
     description: "Duração das chamadas gRPC do BFF a uma dependência",
     advice: { explicitBucketBoundaries: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10] },
@@ -57,17 +88,14 @@ export function createClientTelemetryInterceptor(deps: ClientTelemetryDeps): Int
       return next(req);
     }
 
+    // rpc.method é o nome completo (pacote.Serviço/Método); não existe mais rpc.service.
+    const method = `${req.service.typeName}/${req.method.name}`;
     const attributes = {
-      "rpc.system": "grpc",
-      "rpc.service": req.service.typeName,
-      "rpc.method": req.method.name,
+      "rpc.system.name": "grpc",
+      "rpc.method": method,
       "peer.service": deps.dependency,
     };
-    const span = deps.tracer.startSpan(
-      `${req.service.typeName}/${req.method.name}`,
-      { kind: SpanKind.CLIENT, attributes },
-      parent,
-    );
+    const span = deps.tracer.startSpan(method, { kind: SpanKind.CLIENT, attributes }, parent);
     const ctx = trace.setSpan(parent, span);
     deps.propagator.inject(ctx, req.header, headersSetter);
 
@@ -83,13 +111,14 @@ export function createClientTelemetryInterceptor(deps: ClientTelemetryDeps): Int
       span.setStatus({ code: SpanStatusCode.ERROR, message: Code[connectErr.code] });
       throw err;
     } finally {
-      span.setAttribute("rpc.grpc.status_code", statusCode);
+      const statusName = grpcStatusName(statusCode);
+      span.setAttribute("rpc.response.status_code", statusName);
       span.end();
       duration.record((performance.now() - start) / 1000, {
         dependency: deps.dependency,
-        "rpc.service": req.service.typeName,
-        "rpc.method": req.method.name,
-        "rpc.grpc.status_code": statusCode,
+        "rpc.system.name": "grpc",
+        "rpc.method": method,
+        "rpc.response.status_code": statusName,
       });
     }
   };

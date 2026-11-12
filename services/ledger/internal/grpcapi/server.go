@@ -50,9 +50,10 @@ func NewServer(o ServerOptions, extra ...grpc.ServerOption) *grpc.Server {
 				return !strings.HasPrefix(info.FullMethodName, healthServicePrefix)
 			}),
 		)),
-		// Logging por fora, recuperação por dentro: o panic vira erro Internal e o log
-		// da chamada o registra com o código correto.
-		grpc.ChainUnaryInterceptor(loggingInterceptor(o.Logger), recoveryInterceptor(o.Logger)),
+		// Logging por fora, tradução de erros no meio, recuperação por dentro: o panic vira
+		// erro Internal, os erros de domínio viram status, e o log da chamada registra o
+		// código final.
+		grpc.ChainUnaryInterceptor(loggingInterceptor(o.Logger), errorInterceptor(o.Logger), recoveryInterceptor(o.Logger)),
 	}
 	return grpc.NewServer(append(opts, extra...)...)
 }

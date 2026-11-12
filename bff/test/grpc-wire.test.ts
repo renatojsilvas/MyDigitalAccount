@@ -106,9 +106,9 @@ describe("BFF -> ledger por gRPC sobre HTTP/2", () => {
 
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ code: "dependency_unavailable" });
-    expect(h.spanNamed("conta.ping.v1.PingService/Ping").attributes["rpc.grpc.status_code"]).toBe(
-      14,
-    );
+    expect(
+      h.spanNamed("conta.ping.v1.PingService/Ping").attributes["rpc.response.status_code"],
+    ).toBe("UNAVAILABLE");
   });
 
   it("ledger lento: o prazo é respeitado e a resposta é 504 sem esperar o ledger", async () => {
@@ -131,8 +131,8 @@ describe("BFF -> ledger por gRPC sobre HTTP/2", () => {
     expect(res.statusCode).toBe(504);
     expect(res.json()).toMatchObject({ code: "dependency_timeout" });
     expect(elapsed).toBeLessThan(700); // bem antes do 1s do ledger
-    expect(h.spanNamed("conta.ping.v1.PingService/Ping").attributes["rpc.grpc.status_code"]).toBe(
-      4,
-    );
+    expect(
+      h.spanNamed("conta.ping.v1.PingService/Ping").attributes["rpc.response.status_code"],
+    ).toBe("DEADLINE_EXCEEDED");
   });
 });

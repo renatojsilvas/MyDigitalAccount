@@ -125,11 +125,10 @@ describe("traces", () => {
     });
     expect(client.kind).toBe(SpanKind.CLIENT);
     expect(client.attributes).toMatchObject({
-      "rpc.system": "grpc",
-      "rpc.service": "conta.ping.v1.PingService",
-      "rpc.method": "Ping",
+      "rpc.system.name": "grpc",
+      "rpc.method": "conta.ping.v1.PingService/Ping",
       "peer.service": "ledger",
-      "rpc.grpc.status_code": 0,
+      "rpc.response.status_code": "OK",
     });
     // Mesmo trace; o cliente é filho do servidor.
     expect(client.spanContext().traceId).toBe(server.spanContext().traceId);
@@ -161,7 +160,7 @@ describe("traces", () => {
 
     const client = h.spanNamed("conta.ping.v1.PingService/Ping");
     expect(client.status.code).toBe(SpanStatusCode.ERROR);
-    expect(client.attributes["rpc.grpc.status_code"]).toBe(14);
+    expect(client.attributes["rpc.response.status_code"]).toBe("UNAVAILABLE");
     expect(client.events.some((e) => e.name === "exception")).toBe(true);
   });
 
@@ -240,12 +239,12 @@ describe("métricas", () => {
     });
     await h.app.inject({ url: "/ping" });
 
-    const m = await h.metric("rpc.client.duration");
+    const m = await h.metric("rpc.client.call.duration");
     expect(m?.dataPoints[0]?.attributes).toMatchObject({
       dependency: "ledger",
-      "rpc.service": "conta.ping.v1.PingService",
-      "rpc.method": "Ping",
-      "rpc.grpc.status_code": 14,
+      "rpc.system.name": "grpc",
+      "rpc.method": "conta.ping.v1.PingService/Ping",
+      "rpc.response.status_code": "UNAVAILABLE",
     });
   });
 

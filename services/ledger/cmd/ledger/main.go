@@ -15,12 +15,14 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
+	"conta.local/ledger/internal/account"
 	"conta.local/ledger/internal/grpcapi"
 	"conta.local/ledger/internal/platform/admin"
 	"conta.local/ledger/internal/platform/config"
 	"conta.local/ledger/internal/platform/logging"
 	"conta.local/ledger/internal/platform/postgres"
 	"conta.local/ledger/internal/platform/telemetry"
+	ledgerpg "conta.local/ledger/internal/postgres"
 )
 
 const serviceName = "ledger"
@@ -94,6 +96,10 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	srv := grpcapi.NewServer(grpcapi.ServerOptions{
 		Logger: logger, TracerProvider: tel.Tracer, MeterProvider: tel.Meter, Propagator: tel.Propagator,
 	})
+	// Persistência -> casos de uso -> borda. O Codec da borda grava os resultados idempotentes
+	// no formato do contrato (ADR-0004, seção 3).
+	ledger := account.NewService(ledgerpg.NewStore(pool), grpcapi.Codec{})
+	grpcapi.RegisterLedger(srv, grpcapi.NewLedgerHandler(ledger))
 	grpcapi.RegisterPing(srv, grpcapi.NewPingHandler(serviceName))
 	healthpb.RegisterHealthServer(srv, healthSrv)
 

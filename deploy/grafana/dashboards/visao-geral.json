@@ -76,11 +76,11 @@
     },
     {
       "id": 21, "type": "timeseries", "title": "Chamadas por status gRPC",
-      "description": "0 = OK, 3 = INVALID_ARGUMENT (erro do cliente), 4 = DEADLINE_EXCEEDED, 14 = UNAVAILABLE.",
+      "description": "Nome canônico do status gRPC (rpc_response_status_code, semconv v1.43), igual ao do ledger. NOT_FOUND, FAILED_PRECONDITION e ALREADY_EXISTS são recusas de negócio, não falhas.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
       "targets": [
-        { "refId": "A", "expr": "sum by (rpc_grpc_status_code) (rate(rpc_client_duration_seconds_count{job=\"bff\",dependency=\"ledger\"}[$__rate_interval]))", "legendFormat": "status {{rpc_grpc_status_code}}" }
+        { "refId": "A", "expr": "sum by (rpc_response_status_code) (rate(rpc_client_call_duration_seconds_count{job=\"bff\",dependency=\"ledger\"}[$__rate_interval]))", "legendFormat": "{{rpc_response_status_code}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
     },
@@ -89,17 +89,17 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
       "targets": [
-        { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, rpc_method) (rate(rpc_client_duration_seconds_bucket{job=\"bff\",dependency=\"ledger\"}[$__rate_interval])))", "legendFormat": "{{rpc_method}}" }
+        { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, rpc_method) (rate(rpc_client_call_duration_seconds_bucket{job=\"bff\",dependency=\"ledger\"}[$__rate_interval])))", "legendFormat": "{{rpc_method}}" }
       ],
       "fieldConfig": { "defaults": { "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 5 } }, "overrides": [] }
     },
     {
       "id": 23, "type": "timeseries", "title": "Falhas da dependência (% das chamadas)",
-      "description": "Falha = tudo que não é OK nem INVALID_ARGUMENT (esse é erro do pedido, não da dependência).",
+      "description": "Falha = falha do servidor (UNKNOWN, DEADLINE_EXCEEDED, INTERNAL, UNAVAILABLE, DATA_LOSS), o mesmo critério do log do ledger. Recusas de negócio e pedidos inválidos não contam.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
       "targets": [
-        { "refId": "A", "expr": "100 * (sum(rate(rpc_client_duration_seconds_count{job=\"bff\",dependency=\"ledger\",rpc_grpc_status_code!~\"0|3\"}[$__rate_interval])) or vector(0)) / sum(rate(rpc_client_duration_seconds_count{job=\"bff\",dependency=\"ledger\"}[$__rate_interval]))", "legendFormat": "ledger" }
+        { "refId": "A", "expr": "100 * (sum(rate(rpc_client_call_duration_seconds_count{job=\"bff\",dependency=\"ledger\",rpc_response_status_code=~\"UNKNOWN|DEADLINE_EXCEEDED|INTERNAL|UNAVAILABLE|DATA_LOSS\"}[$__rate_interval])) or vector(0)) / sum(rate(rpc_client_call_duration_seconds_count{job=\"bff\",dependency=\"ledger\"}[$__rate_interval]))", "legendFormat": "ledger" }
       ],
       "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "custom": { "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] }
     },

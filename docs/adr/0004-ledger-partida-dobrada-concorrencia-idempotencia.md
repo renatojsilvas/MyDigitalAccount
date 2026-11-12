@@ -233,6 +233,21 @@ nomes de métricas e atributos já mudaram entre versões (o BFF e o ledger dive
 segue a versão que o `otelgrpc` do ledger emite hoje; a cada atualização do `otelgrpc` ou do SDK JS, conferir se os
 nomes mudaram, porque dashboards e alertas (Fase 6) dependem deles.
 
+**Unificação feita (passo 5)**, conferida no código-fonte do `otelgrpc` v0.72, que segue a semconv **v1.43.0**: o
+BFF passou a emitir os mesmos nomes do ledger.
+
+| | Antes, no BFF | Agora, nos dois |
+|---|---|---|
+| Métrica | `rpc.client.duration` | `rpc.client.call.duration` (ledger: `rpc.server.call.duration`) |
+| Método | `rpc.service` + `rpc.method` curto | `rpc.method` completo (`conta.ledger.v1.LedgerService/Debit`) |
+| Sistema | `rpc.system` | `rpc.system.name` = `grpc` |
+| Status | `rpc.grpc.status_code` numérico | `rpc.response.status_code` com o nome canônico (`OK`, `UNAVAILABLE`, `CANCELLED`) |
+
+No Prometheus: `rpc_client_call_duration_seconds_*` e `rpc_server_call_duration_seconds_*`, com
+`rpc_response_status_code`. O painel de falhas passa a contar só falhas do servidor (`UNKNOWN`, `DEADLINE_EXCEEDED`,
+`INTERNAL`, `UNAVAILABLE`, `DATA_LOSS`), porque `NOT_FOUND`, `FAILED_PRECONDITION` e `ALREADY_EXISTS` agora são
+recusas de negócio esperadas, não falhas da dependência.
+
 ## Consequências
 
 - O saldo de cliente é lido em O(1) e nunca fica negativo, por três barreiras: domínio, `FOR UPDATE` e `CHECK`.
