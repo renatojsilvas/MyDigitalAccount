@@ -72,7 +72,7 @@ jobs:
             -t conta-digital/bff:final .
 
   e2e-observability:
-    name: Critério de pronto (um ping, um trace)
+    name: Critérios de pronto na stack (Fases 0 e 3)
     # Sobe a stack inteira (~1 GB): só em main ou sob demanda, não a cada PR.
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     needs: verify
@@ -98,6 +98,12 @@ jobs:
 
       - name: Um ping do BFF ao ledger é um único trace, ligado aos logs
         run: docker compose run --rm tools make obs-e2e
+
+      - name: Contas de demonstração
+        run: docker compose run --rm tools make seed
+
+      - name: Critério de pronto da Fase 3 (Pix, um trace com cinco serviços, estorno e pendente)
+        run: docker compose run --rm tools make pix-e2e
 
       - name: Logs dos contêineres (se algo falhou)
         if: failure()

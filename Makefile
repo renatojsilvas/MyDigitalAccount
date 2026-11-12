@@ -5,7 +5,7 @@
 # Serviços com persistência: o sqlc gera o código Go das queries (fora do Git).
 SQLC_CONFIGS := $(wildcard services/*/sqlc.yaml)
 
-.PHONY: generate clean-gen proto-lint go-lint go-test ts-lint ts-test vuln obs-smoke obs-e2e lint test seed
+.PHONY: generate clean-gen proto-lint go-lint go-test ts-lint ts-test vuln obs-smoke obs-e2e pix-e2e lint test seed
 
 # Gera gen/ a partir de proto/ (ADR-0001), SOBRESCREVENDO os arquivos no lugar. Os modelos de
 # gen/ vêm de tools/templates; o package.json de gen/ts precisa existir antes do pnpm install.
@@ -65,6 +65,11 @@ obs-smoke:
 # Exige core e obs no ar, com os serviços exportando para o Collector.
 obs-e2e:
 	sh deploy/obs/e2e-trace.sh
+
+# Critério de pronto da Fase 3 na stack real (exige core, obs e o seed): um trace com os cinco
+# serviços, idempotência, estorno na recusa e pendente no timeout.
+pix-e2e:
+	sh deploy/obs/e2e-pix.sh
 
 # Contas de demonstração (Fase 1), criadas pela API gRPC do ledger. Exige o ledger no ar
 # (profile core). Idempotente: rodar de novo não duplica contas nem saldos.

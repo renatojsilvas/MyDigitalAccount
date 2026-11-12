@@ -898,7 +898,7 @@ Métricas acompanhadas no Grafana: latência (p50 e p99), taxa de erro, memória
 - [x] Fase 0: Fundação
 - [x] Fase 1: Ledger
 - [x] Fase 2: BFF "home"
-- [ ] Fase 3: Transfers e antifraude
+- [x] Fase 3: Transfers e antifraude
 - [ ] Fase 4: Eventos e tempo real
 - [ ] Fase 5: Conciliação
 - [ ] Fase 6: SLOs, alertas e gatilhos
