@@ -8,9 +8,10 @@ fintechs (Go nos serviços de domínio, TypeScript/Node no BFF), com observabili
 - **Onde o projeto está agora**: [`docs/estado-do-projeto.md`](docs/estado-do-projeto.md)
 - Decisões de arquitetura: [`docs/adr/`](docs/adr/)
 
-**Fase 0 (Fundação) concluída.** Há um `ledger` em Go e um BFF em TypeScript que se falam por gRPC
-(contrato `.proto` primeiro), com um `/ping` ponta a ponta que aparece como **um único trace** no
-Grafana, ligado aos logs. Domínio (contas, Pix, antifraude...) começa na Fase 1.
+**Fases 0 (Fundação) e 1 (Ledger) concluídas.** O `ledger` em Go tem contas, lançamentos em partida dobrada,
+saldo e extrato, com idempotência em todas as escritas e lock pessimista no saldo (ADR-0004), exposto por
+gRPC; o BFF em TypeScript ainda só tem o `/ping` (a home é a Fase 2). Tudo instrumentado (logs, métricas,
+traces) e com um gate de desempenho (k6) no CI.
 
 ## Pré-requisito
 
@@ -41,10 +42,13 @@ parar e apagar o ambiente são comandos diretos do Compose, porque o `tools` nã
 | Lint e testes de tudo | `docker compose run --rm tools make lint test` |
 | Só os testes / só o lint | `... make test` / `... make lint` |
 | Vulnerabilidades nas dependências Go | `docker compose run --rm tools make vuln` |
+| Criar as contas de demonstração (ledger no ar; idempotente) | `docker compose run --rm tools make seed` |
+| Gate de desempenho do ledger (k6) | `docker compose --profile core up -d --wait ledger` e `docker compose --profile load run --rm k6` |
 | Subir Postgres, ledger e BFF (recarga automática) | `docker compose --profile core up -d --build` |
 | Subir a observabilidade | `docker compose --profile obs up -d --build` |
 | Ver o estado | `docker compose --profile core --profile obs ps` |
 | Parar (mantém os dados) | `docker compose --profile core --profile obs down` |
+| Recriar só o banco (mantém o cache do Go) | `docker compose --profile core down && docker volume rm conta-digital_postgres-data` |
 | Parar e apagar os dados | `docker compose --profile '*' down -v` |
 | Parar **tudo**, inclusive o Postgres de teste | `docker compose --profile '*' down` |
 
@@ -54,9 +58,12 @@ Experimente:
 docker compose --profile core up -d --build
 curl "http://127.0.0.1:8088/ping?message=oi"          # BFF -> ledger: {"echo":"oi","servedBy":"ledger"}
 
+# contas de demonstração (Ana, Bruno, Carla e Diego; o log mostra os account_id)
+docker compose run --rm tools make seed
+
 # chamar o ledger direto por gRPC (o ledger não tem reflection: o .proto descreve o serviço)
-docker compose run --rm tools grpcurl -plaintext -import-path proto -proto conta/ping/v1/ping.proto \
-  -d '{"message":"oi"}' ledger:50051 conta.ping.v1.PingService/Ping
+docker compose run --rm tools grpcurl -plaintext -import-path proto -proto conta/ledger/v1/ledger.proto \
+  -d '{"account_id":"<account_id do seed>"}' ledger:50051 conta.ledger.v1.LedgerService/GetBalance
 
 docker compose exec postgres psql -U conta -d ledger   # psql interativo (usa o psql do próprio servidor)
 ```
@@ -73,14 +80,18 @@ Os serviços **só exportam telemetria se** `OTEL_EXPORTER_OTLP_ENDPOINT` estive
 `.env`, ou passe na linha de comando); sem ele, nada é exportado e os logs seguem no stdout.
 
 - **Grafana**: `http://127.0.0.1:3000`, sem login e só em `127.0.0.1` (decisão de desenvolvimento local).
-  Datasources e o dashboard "Conta Digital: visão geral" são provisionados como código. Nos logs, clique
+  Datasources e os dashboards "Conta Digital: visão geral" e "Conta Digital: ledger" (RED, negócio, pool de
+  conexões, logs e traces) são provisionados como código. Nos logs, clique
   no `trace_id` para saltar ao trace no Tempo.
 - **Prometheus**: `http://127.0.0.1:9090`.
 - `make obs-smoke` prova que traces, métricas e logs chegam a Tempo, Prometheus e Loki.
+- No Mac, a stack de observabilidade disputa CPU com os serviços e distorce a cauda de latência: meça carga só
+  com o profile `core` ([`load/README.md`](load/README.md)).
 
 ## Código gerado
 
-`gen/` não vai para o Git (ADR-0001) e é pré-requisito de lint, testes e build das imagens.
+`gen/` (código do `.proto`) e `services/*/internal/postgres/sqlcgen/` (código do sqlc) não vão para o Git
+(ADR-0001, ADR-0004) e são pré-requisito de lint, testes e build das imagens; `make generate` cria os dois.
 `make generate` o **sobrescreve no lugar**; com o ambiente de desenvolvimento no ar, o BFF e o ledger
 se recompilam sozinhos em poucos segundos. Para gerar do zero (por exemplo, ao remover um `.proto`):
 
@@ -132,7 +143,8 @@ Novas portas publicadas seguem o mesmo padrão e entram nesta tabela.
 
 - **CI** (`.github/workflows/ci.yml`): usa as mesmas imagens e comandos. A cada push e PR roda
   `make lint test`, o `buf breaking` contra a branch base (só em PR) e a compilação das imagens finais.
-  Em `main` (ou sob demanda) roda também `make obs-e2e`; toda segunda-feira, o `govulncheck`.
+  A cada push e PR roda também o gate de desempenho (k6 contra o ledger; o resumo vira artefato). Em `main`
+  (ou sob demanda) roda `make obs-e2e`; toda segunda-feira, o `govulncheck`.
 - **Editor**: `.devcontainer/` abre o VS Code dentro do contêiner `tools` (autocompletar e lint sem instalar
   as linguagens). `.vscode/extensions.json` recomenda as extensões.
 
@@ -140,10 +152,11 @@ Novas portas publicadas seguem o mesmo padrão e entram nesta tabela.
 
 ```
 proto/            contratos (buf); gen/ é gerado, fora do Git
-services/ledger/  Go: contas e saldo (na Fase 0, só o ping); os demais serviços nascem nas suas fases
+services/ledger/  Go: contas, lançamentos, saldo e extrato (domínio em internal/account); demais serviços nas suas fases
 bff/              TypeScript (Fastify): agrega e protege
 testkit/          helpers de teste compartilhados (Postgres isolado por teste)
 tools/            Dockerfile da imagem de ferramentas (única fonte de versões)
-deploy/           compose por grupo (core, obs), OTel, Prometheus, Tempo, Loki, Grafana
+deploy/           compose por grupo (core, obs, load), OTel, Prometheus, Tempo, Loki, Grafana
+load/             roteiros k6 (linha de base do ledger) e a origem dos thresholds
 docs/             plano, arquitetura, ADRs, estado do projeto
 ```
