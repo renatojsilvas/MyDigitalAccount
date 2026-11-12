@@ -58,7 +58,7 @@ func movement(t *testing.T, cents int64, at time.Time) account.Movement {
 // create grava a conta numa transação própria.
 func create(t *testing.T, s *postgres.Store, a account.Account) {
 	t.Helper()
-	if err := s.WithTx(t.Context(), func(tx *postgres.Tx) error { return tx.CreateAccount(t.Context(), a) }); err != nil {
+	if err := s.WithTx(t.Context(), func(tx account.Tx) error { return tx.CreateAccount(t.Context(), a) }); err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
 }
@@ -66,7 +66,7 @@ func create(t *testing.T, s *postgres.Store, a account.Account) {
 // post trava a conta, aplica a operação do domínio e grava lançamento e saldo, como o caso
 // de uso fará no passo 4.
 func post(ctx context.Context, s *postgres.Store, id account.ID, op func(*account.Account) (account.Entry, error)) error {
-	return s.WithTx(ctx, func(tx *postgres.Tx) error {
+	return s.WithTx(ctx, func(tx account.Tx) error {
 		a, err := tx.LockAccount(ctx, id)
 		if err != nil {
 			return err
@@ -110,7 +110,7 @@ func TestAccountNotFound(t *testing.T) {
 	if _, err := s.Account(t.Context(), missing); !errors.Is(err, account.ErrAccountNotFound) {
 		t.Errorf("Account: err = %v, want ErrAccountNotFound", err)
 	}
-	err := s.WithTx(t.Context(), func(tx *postgres.Tx) error {
+	err := s.WithTx(t.Context(), func(tx account.Tx) error {
 		_, err := tx.LockAccount(t.Context(), missing)
 		return err
 	})
@@ -127,7 +127,7 @@ func TestDuplicateDocumentKeepsTransactionUsable(t *testing.T) {
 	s := newStore(t)
 	create(t, s, newCustomer(t))
 
-	err := s.WithTx(t.Context(), func(tx *postgres.Tx) error {
+	err := s.WithTx(t.Context(), func(tx account.Tx) error {
 		if err := tx.CreateAccount(t.Context(), newCustomer(t)); !errors.Is(err, account.ErrAccountAlreadyExists) {
 			t.Fatalf("err = %v, want ErrAccountAlreadyExists", err)
 		}
@@ -245,7 +245,7 @@ func TestWithTxRollsBack(t *testing.T) {
 	create(t, s, a)
 	boom := errors.New("falha depois de lançar")
 
-	err := s.WithTx(ctx, func(tx *postgres.Tx) error {
+	err := s.WithTx(ctx, func(tx account.Tx) error {
 		acc, err := tx.LockAccount(ctx, a.ID())
 		if err != nil {
 			return err
@@ -272,7 +272,7 @@ func TestWithTxRollsBack(t *testing.T) {
 				t.Fatal("o panic de fn deveria seguir adiante")
 			}
 		}()
-		_ = s.WithTx(ctx, func(tx *postgres.Tx) error {
+		_ = s.WithTx(ctx, func(tx account.Tx) error {
 			_ = post(ctx, s, a.ID(), credit(t, movement(t, 1, openedAt))) // outra transação, confirmada
 			acc, _ := tx.LockAccount(ctx, a.ID())
 			e, _ := acc.Credit(movement(t, 100, openedAt), account.CreditOpening)
@@ -300,7 +300,7 @@ func TestLockTimeoutIsRetryable(t *testing.T) {
 	release := make(chan struct{})
 	holderDone := make(chan error, 1)
 	go func() {
-		holderDone <- s.WithTx(ctx, func(tx *postgres.Tx) error {
+		holderDone <- s.WithTx(ctx, func(tx account.Tx) error {
 			if _, err := tx.LockAccount(ctx, a.ID()); err != nil {
 				return err
 			}
@@ -312,7 +312,7 @@ func TestLockTimeoutIsRetryable(t *testing.T) {
 	<-locked
 
 	start := time.Now()
-	err := s.WithTx(ctx, func(tx *postgres.Tx) error {
+	err := s.WithTx(ctx, func(tx account.Tx) error {
 		_, err := tx.LockAccount(ctx, a.ID())
 		return err
 	})
@@ -337,7 +337,7 @@ func TestIdempotencyKeyLifecycle(t *testing.T) {
 	hash := make([]byte, 32)
 	hash[0] = 7
 
-	err := s.WithTx(ctx, func(tx *postgres.Tx) error {
+	err := s.WithTx(ctx, func(tx account.Tx) error {
 		claimed, err := tx.ClaimKey(ctx, "debit", "k1", hash)
 		if err != nil || !claimed {
 			t.Fatalf("primeira reserva = %v, %v; want true", claimed, err)
@@ -352,7 +352,7 @@ func TestIdempotencyKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = s.WithTx(ctx, func(tx *postgres.Tx) error {
+	err = s.WithTx(ctx, func(tx account.Tx) error {
 		claimed, err := tx.ClaimKey(ctx, "debit", "k1", hash)
 		if err != nil || claimed {
 			t.Fatalf("segunda reserva = %v, %v; want false (a chave já existe)", claimed, err)
@@ -400,7 +400,7 @@ func TestConcurrentClaimWaitsForTheFirst(t *testing.T) {
 			finish := make(chan struct{})
 			firstDone := make(chan error, 1)
 			go func() {
-				firstDone <- s.WithTx(ctx, func(tx *postgres.Tx) error {
+				firstDone <- s.WithTx(ctx, func(tx account.Tx) error {
 					if _, err := tx.ClaimKey(ctx, "debit", "k", hash); err != nil {
 						return err
 					}
@@ -417,7 +417,7 @@ func TestConcurrentClaimWaitsForTheFirst(t *testing.T) {
 			second := make(chan bool, 1)
 			secondErr := make(chan error, 1)
 			go func() {
-				secondErr <- s.WithTx(ctx, func(tx *postgres.Tx) error {
+				secondErr <- s.WithTx(ctx, func(tx account.Tx) error {
 					c, err := tx.ClaimKey(ctx, "debit", "k", hash)
 					second <- c
 					return err

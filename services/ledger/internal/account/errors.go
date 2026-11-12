@@ -16,7 +16,18 @@ var (
 	ErrAccountAlreadyExists = errors.New("account: document already has an account")
 	// ErrInsufficientFunds indica que o saldo não cobre o débito.
 	ErrInsufficientFunds = errors.New("account: insufficient funds")
+	// ErrIdempotencyKeyReused indica a mesma chave de idempotência com um pedido diferente.
+	ErrIdempotencyKeyReused = errors.New("account: idempotency key reused with a different request")
 )
+
+// isBusinessRejection diz se o erro é uma recusa de negócio, que é gravada junto com a chave
+// e repetida igual a cada nova tentativa (ADR-0004, seção 3). Qualquer outro erro desfaz a
+// transação, e uma nova tentativa com a mesma chave executa de novo.
+func isBusinessRejection(err error) bool {
+	return errors.Is(err, ErrInsufficientFunds) ||
+		errors.Is(err, ErrAccountNotFound) ||
+		errors.Is(err, ErrAccountAlreadyExists)
+}
 
 // Violações de invariante: indicam bug ou limite físico, nunca um pedido comum do cliente.
 var (

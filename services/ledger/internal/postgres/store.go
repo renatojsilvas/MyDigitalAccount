@@ -14,6 +14,12 @@ import (
 	"conta.local/ledger/internal/postgres/sqlcgen"
 )
 
+// O Store e o Tx satisfazem as portas que o caso de uso define em account.
+var (
+	_ account.Store = (*Store)(nil)
+	_ account.Tx    = (*Tx)(nil)
+)
+
 // Store dá acesso ao banco do ledger. Leituras simples são métodos do Store; tudo que precisa
 // de transação (travar a conta, lançar, idempotência) só existe em Tx, obtido por WithTx.
 type Store struct {
@@ -32,7 +38,7 @@ func NewStore(pool *pgxpool.Pool) *Store {
 //
 // Isolamento READ COMMITTED (o padrão): com o lock pessimista na conta, cada comando enxerga
 // o que já foi confirmado, e é isso que o débito precisa (ADR-0004, seção 2).
-func (s *Store) WithTx(ctx context.Context, fn func(*Tx) error) (err error) {
+func (s *Store) WithTx(ctx context.Context, fn func(account.Tx) error) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return classify(fmt.Errorf("postgres: iniciando transação: %w", err))

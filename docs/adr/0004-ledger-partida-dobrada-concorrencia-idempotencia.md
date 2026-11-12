@@ -236,6 +236,9 @@ nomes mudaram, porque dashboards e alertas (Fase 6) dependem deles.
 ## Consequências
 
 - O saldo de cliente é lido em O(1) e nunca fica negativo, por três barreiras: domínio, `FOR UPDATE` e `CHECK`.
+  O lock é a barreira que importa: numa checagem de mutação (passo 4), sem o `FOR UPDATE` o teste de débitos
+  concorrentes falhou por *lost update* (50 débitos aceitos onde cabiam 33; conta que devia zerar terminou com
+  5.000), e o `CHECK` não disparou, porque o saldo nunca ficou negativo: o dinheiro simplesmente "apareceu".
 - Débitos na mesma conta são serializados: a latência da conta quente (Fase 7) cresce com a fila no lock. É o custo
   aceito; a Fase 7 vai medi-lo.
 - Contas internas não têm saldo gravado nem lock, então não viram gargalo global; consultar o saldo delas custa um
