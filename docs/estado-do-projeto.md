@@ -302,12 +302,7 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
 ## 8. Pendências e dívidas conhecidas
 
 **Para você fechar**
-- **CI no GitHub** (primeira execução, Fase 1): "Lint e testes" ficou **verde**. Os jobs "Critério de pronto" e "Gate
-  de desempenho" falharam no `docker compose up` (`service "bff" declares unknown service "tools" as additional
-  contexts`): o `additional_contexts` usava `service:tools`, e o `tools` está num profile inativo no `up` do CI.
-  Corrigido para `docker-image://conta-digital/tools:dev` (commit separado; conferido localmente do zero, com
-  `-p ci-clean` e volumes novos). **Falta**: ver esses dois jobs verdes no GitHub e então **recalibrar os thresholds
-  do k6** com o artefato `k6-ledger-baseline` do runner (os atuais vêm do Mac). O `.devcontainer` ainda não rodou.
+- O `.devcontainer` **nunca rodou** (abrir o VS Code dentro do contêiner `tools`); só o CI foi validado.
 
 **Decisões pendentes da Fase 2 (suas)**
 - **Partida a frio do BFF**: a primeira chamada ao ledger depois que o BFF sobe leva ~300 ms (`/home`) a mais de 1 s
@@ -352,7 +347,8 @@ agora os caminhos de sucesso usam prazo de 10 s e os de timeout usam um handler 
 curto; paralelismo e isolamento de prazos são provados com barreira e portão, sem `sleep`; 0 falhas em 20 execuções
 sob a mesma carga); login de demonstração acha a conta (RPC no ledger); `ErrorInfo` gerado em TypeScript;
 `traceparent` de entrada deixou de ser confiado (revisto com a autenticação); título do dashboard "visão geral"; CI do
-GitHub corrigido (`additional_contexts`).
+GitHub corrigido (`additional_contexts`: o `up` do CI quebrava por `service:tools` num profile inativo) e **verde em
+todos os jobs**, inclusive o gate do k6, que passou com os limites calibrados no Mac: **não é preciso recalibrar**.
 
 **Resolvidas na Fase 1**: papel Postgres próprio do ledger; spans do `pgx` e métricas do pool; rótulo de status gRPC
 unificado entre BFF e ledger; teste do ping que oscilava (espera com prazo).
