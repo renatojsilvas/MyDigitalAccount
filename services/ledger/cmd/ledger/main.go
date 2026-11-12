@@ -16,6 +16,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"conta.local/ledger/internal/account"
+	"conta.local/ledger/internal/accountotel"
 	"conta.local/ledger/internal/grpcapi"
 	"conta.local/ledger/internal/platform/admin"
 	"conta.local/ledger/internal/platform/config"
@@ -86,7 +87,7 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		return fmt.Errorf("ouvindo admin em %s: %w", cfg.AdminAddr, err)
 	}
 
-	pool, err := postgres.Open(ctx, cfg.Postgres)
+	pool, err := postgres.Open(ctx, cfg.Postgres, postgres.WithTelemetry(tel.Tracer, tel.Meter))
 	if err != nil {
 		return fmt.Errorf("postgres: %w", err)
 	}
@@ -98,13 +99,17 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	})
 	// Persistência -> casos de uso -> borda. O Codec da borda grava os resultados idempotentes
 	// no formato do contrato (ADR-0004, seção 3).
-	ledger := account.NewService(ledgerpg.NewStore(pool), grpcapi.Codec{})
+	observer, err := accountotel.New(tel.Meter)
+	if err != nil {
+		return fmt.Errorf("métricas de negócio: %w", err)
+	}
+	ledger := account.NewService(ledgerpg.NewStore(pool), grpcapi.Codec{}, account.WithObserver(observer))
 	grpcapi.RegisterLedger(srv, grpcapi.NewLedgerHandler(ledger))
 	grpcapi.RegisterPing(srv, grpcapi.NewPingHandler(serviceName))
 	healthpb.RegisterHealthServer(srv, healthSrv)
 
 	// O /readyz depende do Postgres: sem banco o ledger não pode atender (o /healthz não depende).
-	adminSrv := admin.New(logger, admin.Check{Name: "postgres", Fn: pool.Ping})
+	adminSrv := admin.New(logger, admin.Check{Name: "postgres", Fn: func(ctx context.Context) error { return postgres.Ping(ctx, pool) }})
 
 	logger.InfoContext(ctx, "serviço iniciando",
 		"version", version, "environment", cfg.Environment,

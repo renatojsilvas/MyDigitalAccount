@@ -71,14 +71,16 @@ type (
 //     com ErrIdempotencyKeyReused;
 //  3. se é nova: executa op e grava o resultado, inclusive uma recusa de negócio, com commit.
 //
-// Um erro que não é recusa de negócio desfaz tudo, inclusive a reserva da chave.
+// Um erro que não é recusa de negócio desfaz tudo, inclusive a reserva da chave. O Outcome
+// diz o que aconteceu (vazio quando houve rollback), para a observabilidade.
 func idempotent[T any](
 	ctx context.Context, s *Service, scope string, key IdempotencyKey, hash []byte,
 	enc encoder[T], dec decoder[T], op func(Tx) (T, error),
-) (T, error) {
+) (T, Outcome, error) {
 	var (
 		result    T
 		rejection error
+		outcome   Outcome
 	)
 	err := s.store.WithTx(ctx, func(tx Tx) error {
 		claimed, err := tx.ClaimKey(ctx, scope, key.String(), hash)
@@ -87,6 +89,10 @@ func idempotent[T any](
 		}
 		if !claimed {
 			result, rejection, err = replay(ctx, tx, s.codec, scope, key, hash, dec)
+			outcome = OutcomeReplayed
+			if errors.Is(rejection, ErrIdempotencyKeyReused) {
+				outcome = OutcomeKeyConflict
+			}
 			return err
 		}
 
@@ -99,24 +105,25 @@ func idempotent[T any](
 			if err != nil {
 				return fmt.Errorf("account: codificando recusa: %w", err)
 			}
-			rejection = opErr
+			rejection, outcome = opErr, OutcomeRejected
 			return tx.CompleteKey(ctx, scope, key.String(), code, body)
 		}
 		body, err := enc(out)
 		if err != nil {
 			return fmt.Errorf("account: codificando resultado: %w", err)
 		}
-		result = out
+		result, outcome = out, OutcomeExecuted
 		return tx.CompleteKey(ctx, scope, key.String(), 0, body)
 	})
 	var zero T
 	if err != nil {
-		return zero, err
+		// Rollback: nada foi gravado, não há desfecho de negócio.
+		return zero, "", err
 	}
 	if rejection != nil {
-		return zero, rejection
+		return zero, outcome, rejection
 	}
-	return result, nil
+	return result, outcome, nil
 }
 
 // replay devolve o resultado gravado de uma chave já usada.

@@ -14,9 +14,10 @@ const (
 // Service são os casos de uso do ledger. Orquestra: a regra de negócio está em Account e
 // Entry; a persistência, atrás das portas Store e Tx.
 type Service struct {
-	store Store
-	codec ResultCodec
-	now   func() time.Time
+	store    Store
+	codec    ResultCodec
+	now      func() time.Time
+	observer Observer
 }
 
 // Option configura o Service (functional options).
@@ -29,7 +30,7 @@ func WithClock(now func() time.Time) Option {
 
 // NewService monta os casos de uso sobre o Store e o codec de resultados da borda.
 func NewService(store Store, codec ResultCodec, opts ...Option) *Service {
-	s := &Service{store: store, codec: codec, now: time.Now}
+	s := &Service{store: store, codec: codec, now: time.Now, observer: noopObserver{}}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -53,7 +54,7 @@ type OpenAccountCommand struct {
 // OpenAccount abre uma conta com saldo zero. ErrAccountAlreadyExists se o CPF já tem conta.
 func (s *Service) OpenAccount(ctx context.Context, cmd OpenAccountCommand) (Account, error) {
 	hash := requestHash(cmd.Holder.String(), cmd.Document.Digits())
-	return idempotent(ctx, s, scopeOpenAccount, cmd.Key, hash, s.codec.EncodeAccount, s.codec.DecodeAccount,
+	a, outcome, err := idempotent(ctx, s, scopeOpenAccount, cmd.Key, hash, s.codec.EncodeAccount, s.codec.DecodeAccount,
 		func(tx Tx) (Account, error) {
 			id, err := NewID()
 			if err != nil {
@@ -65,6 +66,8 @@ func (s *Service) OpenAccount(ctx context.Context, cmd OpenAccountCommand) (Acco
 			}
 			return a, nil
 		})
+	s.finish(ctx, WriteEvent{Operation: scopeOpenAccount, AccountID: a.ID()}, outcome, err)
+	return a, err
 }
 
 // CreditCommand é o pedido de crédito, já validado.
@@ -80,12 +83,16 @@ type CreditCommand struct {
 func (s *Service) Credit(ctx context.Context, cmd CreditCommand) (Posting, error) {
 	hash := requestHash(cmd.AccountID.String(), strconv.FormatInt(cmd.Amount.Cents(), 10),
 		strconv.Itoa(int(cmd.Reason)), cmd.Description.String())
-	return idempotent(ctx, s, scopeCredit, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
+	p, outcome, err := idempotent(ctx, s, scopeCredit, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
 		func(tx Tx) (Posting, error) {
 			return s.post(ctx, tx, cmd.AccountID, cmd.Amount, cmd.Description, func(a *Account, m Movement) (Entry, error) {
 				return a.Credit(m, cmd.Reason)
 			})
 		})
+	s.finish(ctx, WriteEvent{
+		Operation: scopeCredit, Reason: cmd.Reason.String(), Amount: cmd.Amount, AccountID: cmd.AccountID,
+	}, outcome, err)
+	return p, err
 }
 
 // DebitCommand é o pedido de débito, já validado.
@@ -102,12 +109,16 @@ type DebitCommand struct {
 func (s *Service) Debit(ctx context.Context, cmd DebitCommand) (Posting, error) {
 	hash := requestHash(cmd.AccountID.String(), strconv.FormatInt(cmd.Amount.Cents(), 10),
 		strconv.Itoa(int(cmd.Reason)), cmd.Description.String())
-	return idempotent(ctx, s, scopeDebit, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
+	p, outcome, err := idempotent(ctx, s, scopeDebit, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
 		func(tx Tx) (Posting, error) {
 			return s.post(ctx, tx, cmd.AccountID, cmd.Amount, cmd.Description, func(a *Account, m Movement) (Entry, error) {
 				return a.Debit(m, cmd.Reason)
 			})
 		})
+	s.finish(ctx, WriteEvent{
+		Operation: scopeDebit, Reason: cmd.Reason.String(), Amount: cmd.Amount, AccountID: cmd.AccountID,
+	}, outcome, err)
+	return p, err
 }
 
 // post é o lançamento sob lock pessimista (ADR-0004, seção 2): trava a conta, deixa o

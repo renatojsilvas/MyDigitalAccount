@@ -581,3 +581,89 @@ func TestStatementPaging(t *testing.T) {
 		t.Fatalf("saldo de conta inexistente: err = %v, want ErrAccountNotFound", err)
 	}
 }
+
+// recorder guarda os eventos de escrita emitidos pelo Service.
+type recorder struct {
+	mu     sync.Mutex
+	events []account.WriteEvent
+}
+
+func (r *recorder) WriteFinished(_ context.Context, ev account.WriteEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, ev)
+}
+
+func (r *recorder) last(t *testing.T) account.WriteEvent {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.events) == 0 {
+		t.Fatal("nenhum evento emitido")
+	}
+	return r.events[len(r.events)-1]
+}
+
+func (r *recorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.events)
+}
+
+func TestServiceEmitsWriteEvents(t *testing.T) {
+	rec := &recorder{}
+	f := newFixture(t, 50*time.Millisecond, account.WithObserver(rec))
+	a := f.open(t)
+	if ev := rec.last(t); ev.Operation != "open_account" || ev.Outcome != account.OutcomeExecuted || ev.AccountID != a.ID() {
+		t.Fatalf("abertura: %+v", ev)
+	}
+	f.fund(t, a.ID(), 100)
+
+	key := newKey(t)
+	steps := []struct {
+		name string
+		cmd  account.DebitCommand
+		want account.Outcome
+	}{
+		{"recusa por saldo", debitCmd(t, key, a.ID(), 500), account.OutcomeRejected},
+		{"repetição da recusa", debitCmd(t, key, a.ID(), 500), account.OutcomeReplayed},
+		{"conflito de chave", debitCmd(t, key, a.ID(), 1), account.OutcomeKeyConflict},
+		{"débito executado", debitCmd(t, newKey(t), a.ID(), 40), account.OutcomeExecuted},
+	}
+	for _, s := range steps {
+		_, _ = f.svc.Debit(t.Context(), s.cmd)
+		ev := rec.last(t)
+		if ev.Operation != "debit" || ev.Outcome != s.want || ev.Reason != "external" || ev.AccountID != a.ID() {
+			t.Fatalf("%s: evento %+v, want desfecho %s", s.name, ev, s.want)
+		}
+		if s.want == account.OutcomeRejected && !errors.Is(ev.Rejection, account.ErrInsufficientFunds) {
+			t.Fatalf("%s: Rejection = %v", s.name, ev.Rejection)
+		}
+		if s.want == account.OutcomeExecuted && ev.Amount.Cents() != 40 {
+			t.Fatalf("%s: Amount = %d", s.name, ev.Amount.Cents())
+		}
+	}
+
+	// Erro de infraestrutura (lock timeout) não é desfecho de negócio: nenhum evento.
+	before := rec.count()
+	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- f.store.WithTx(context.Background(), func(tx account.Tx) error {
+			if _, err := tx.LockAccount(context.Background(), a.ID()); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	_, err := f.svc.Debit(t.Context(), debitCmd(t, newKey(t), a.ID(), 1))
+	close(release)
+	if herr := <-done; herr != nil {
+		t.Fatal(herr)
+	}
+	if err == nil || rec.count() != before {
+		t.Fatalf("lock timeout: err = %v, eventos %d -> %d; want erro e nenhum evento", err, before, rec.count())
+	}
+}

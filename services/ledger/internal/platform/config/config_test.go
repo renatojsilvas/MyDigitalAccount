@@ -35,7 +35,7 @@ func TestLoad(t *testing.T) {
 			want: config.Config{
 				Environment: "development", LogLevel: slog.LevelInfo,
 				GRPCAddr: ":50051", AdminAddr: ":8081", ShutdownTimeout: 10 * time.Second,
-				Postgres: config.Postgres{Host: "postgres", Port: 5432, User: "u", Password: "p", Database: "ledger", LockTimeout: time.Second},
+				Postgres: config.Postgres{Host: "postgres", Port: 5432, User: "u", Password: "p", Database: "ledger", LockTimeout: time.Second, MaxConns: 10},
 			},
 		},
 		{
@@ -43,12 +43,12 @@ func TestLoad(t *testing.T) {
 			env: creds(map[string]string{
 				"ENVIRONMENT": "production", "LOG_LEVEL": "debug", "LEDGER_GRPC_ADDR": ":1",
 				"LEDGER_ADMIN_ADDR": ":2", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4317", "SHUTDOWN_TIMEOUT": "3s",
-				"POSTGRES_HOST": "db", "POSTGRES_PORT": "6432", "LEDGER_DB_NAME": "outro", "LEDGER_DB_LOCK_TIMEOUT": "250ms",
+				"POSTGRES_HOST": "db", "POSTGRES_PORT": "6432", "LEDGER_DB_NAME": "outro", "LEDGER_DB_LOCK_TIMEOUT": "250ms", "LEDGER_DB_MAX_CONNS": "25",
 			}),
 			want: config.Config{
 				Environment: "production", LogLevel: slog.LevelDebug, GRPCAddr: ":1",
 				AdminAddr: ":2", OTLPEndpoint: "http://c:4317", ShutdownTimeout: 3 * time.Second,
-				Postgres: config.Postgres{Host: "db", Port: 6432, User: "u", Password: "p", Database: "outro", LockTimeout: 250 * time.Millisecond},
+				Postgres: config.Postgres{Host: "db", Port: 6432, User: "u", Password: "p", Database: "outro", LockTimeout: 250 * time.Millisecond, MaxConns: 25},
 			},
 		},
 		{
@@ -75,6 +75,16 @@ func TestLoad(t *testing.T) {
 			name:    "lock timeout zero desligaria o limite",
 			env:     creds(map[string]string{"LEDGER_DB_LOCK_TIMEOUT": "0s"}),
 			wantErr: []string{"LEDGER_DB_LOCK_TIMEOUT"},
+		},
+		{
+			name:    "pool sem conexões",
+			env:     creds(map[string]string{"LEDGER_DB_MAX_CONNS": "0"}),
+			wantErr: []string{"LEDGER_DB_MAX_CONNS"},
+		},
+		{
+			name:    "pool não numérico",
+			env:     creds(map[string]string{"LEDGER_DB_MAX_CONNS": "muitas"}),
+			wantErr: []string{"LEDGER_DB_MAX_CONNS"},
 		},
 		{
 			name:    "lock timeout inválido",

@@ -33,6 +33,9 @@ type Postgres struct {
 	// LockTimeout limita a espera por um lock de linha (a conta travada por outro débito).
 	// Estourado, o Postgres cancela o comando e o cliente pode repetir com a mesma chave.
 	LockTimeout time.Duration
+	// MaxConns é o tamanho máximo do pool. Explícito para a utilização do pool (conexões em uso
+	// / máximo, o U do método USE) ter um denominador conhecido.
+	MaxConns int32
 }
 
 // Lookup tem a assinatura de os.LookupEnv. Receber a função, em vez de ler o ambiente
@@ -105,6 +108,14 @@ func loadPostgres(get func(key, def string) string) (Postgres, []error) {
 		errs = append(errs, errors.New("LEDGER_DB_LOCK_TIMEOUT deve ser de pelo menos 1ms"))
 	}
 	pg.LockTimeout = lockTimeout
+	maxConns, err := strconv.ParseInt(get("LEDGER_DB_MAX_CONNS", "10"), 10, 32)
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("LEDGER_DB_MAX_CONNS inválido: %w", err))
+	case maxConns < 1 || maxConns > 200:
+		errs = append(errs, errors.New("LEDGER_DB_MAX_CONNS deve estar entre 1 e 200"))
+	}
+	pg.MaxConns = int32(maxConns)
 	if pg.User == "" {
 		errs = append(errs, errors.New("LEDGER_DB_USER é obrigatória"))
 	}

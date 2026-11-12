@@ -228,6 +228,20 @@ mistura duas convenções no mesmo serviço e faz cada cliente reimplementar o q
   deadlock e falha de serialização voltam como erro com `Retryable() bool`; quem trata pergunta pelo comportamento,
   sem importar o adaptador.
 
+**Observabilidade do banco (passo 6)**
+
+- Biblioteca `github.com/exaring/otelpgx` v0.13.0 (publicada em 8/10/2026, mantida, pgx v5), escolhida depois de
+  conferir a manutenção na documentação oficial. Providers passados explicitamente (o padrão dela são os globais).
+- Um span por query, filho do span gRPC, com `db.query.text` (SQL com placeholders) e **sem os valores dos
+  parâmetros** (o padrão da biblioteca; um teste garante que o CPF não aparece). Sem span de aquisição de conexão:
+  a espera pelo pool aparece em `pgxpool.empty_acquire_wait_time`.
+- A sonda `/readyz` usa o ping do protocolo (`PgConn().Ping`), que não passa pelo tracer: sem traces órfãos.
+- Métricas do pool (`pgxpool.*`) para o método USE, com tamanho explícito (`LEDGER_DB_MAX_CONNS`, padrão 10).
+- Métricas de negócio por uma porta `account.Observer` (o domínio não importa OpenTelemetry), implementada em
+  `internal/accountotel`: `ledger.entries`, `ledger.posted_amount`, `ledger.rejections`,
+  `ledger.idempotency.replays`, `ledger.idempotency.conflicts` e `ledger.accounts.opened`, com rótulos de conjunto
+  fixo. O ID da conta vai só para o span (`ledger.account_id`).
+
 **Atenção, semconv de RPC em evolução**: as convenções semânticas de RPC do OpenTelemetry ainda não são estáveis, e
 nomes de métricas e atributos já mudaram entre versões (o BFF e o ledger divergem justamente por isso). A unificação
 segue a versão que o `otelgrpc` do ledger emite hoje; a cada atualização do `otelgrpc` ou do SDK JS, conferir se os

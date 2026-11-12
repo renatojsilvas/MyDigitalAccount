@@ -5,6 +5,7 @@ go 1.27
 require (
 	conta.local/gen/go v0.0.0
 	conta.local/testkit v0.0.0-00010101000000-000000000000
+	github.com/exaring/otelpgx v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/pressly/goose/v3 v3.30.0
