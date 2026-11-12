@@ -15,6 +15,11 @@ const envSchema = z.object({
   // Prazos da home (ADR-0005): menores que o SLO de 300 ms; o extrato é cortado antes de propósito.
   LEDGER_BALANCE_TIMEOUT_MS: z.coerce.number().int().positive().default(250),
   LEDGER_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(200),
+  TRANSFERS_GRPC_URL: z.url().default("http://transfers:50081"),
+  // Prazo das chamadas ao transfers (aceite e consulta de Pix).
+  TRANSFERS_TIMEOUT_MS: z.coerce.number().int().positive().default(1000),
+  // Prazo da seção de limites da home: opcional, menor que o SLO de 300 ms, como o extrato.
+  TRANSFERS_LIMITS_TIMEOUT_MS: z.coerce.number().int().positive().default(200),
   // Segredo HS256 do JWT (ADR-0006). Sem valor padrão, nem em desenvolvimento.
   BFF_JWT_SECRET: z.string().min(32, "precisa ter pelo menos 32 caracteres"),
   BFF_JWT_TTL_SECONDS: z.coerce.number().int().min(1).max(86_400).default(900),
@@ -34,6 +39,9 @@ export interface Config {
   readonly ledgerTimeoutMs: number;
   readonly ledgerBalanceTimeoutMs: number;
   readonly ledgerStatementTimeoutMs: number;
+  readonly transfersUrl: string;
+  readonly transfersTimeoutMs: number;
+  readonly transfersLimitsTimeoutMs: number;
   readonly jwtSecret: string;
   readonly jwtTtlSeconds: number;
   /** Rota POST /auth/demo-login registrada? Nunca em production (ADR-0006). */
@@ -81,6 +89,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     ledgerTimeoutMs: e.LEDGER_TIMEOUT_MS,
     ledgerBalanceTimeoutMs: e.LEDGER_BALANCE_TIMEOUT_MS,
     ledgerStatementTimeoutMs: e.LEDGER_STATEMENT_TIMEOUT_MS,
+    transfersUrl: e.TRANSFERS_GRPC_URL,
+    transfersTimeoutMs: e.TRANSFERS_TIMEOUT_MS,
+    transfersLimitsTimeoutMs: e.TRANSFERS_LIMITS_TIMEOUT_MS,
     jwtSecret: e.BFF_JWT_SECRET,
     jwtTtlSeconds: e.BFF_JWT_TTL_SECONDS,
     demoLogin,

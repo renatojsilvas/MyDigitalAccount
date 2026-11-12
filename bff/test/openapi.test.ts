@@ -32,7 +32,13 @@ describe("OpenAPI gerado dos schemas", () => {
   it("descreve as rotas da API e esconde as sondas de saúde", async () => {
     const doc = await openapi();
     const paths = doc.paths as Record<string, Json>;
-    expect(Object.keys(paths).sort()).toEqual(["/auth/demo-login", "/home", "/ping"]);
+    expect(Object.keys(paths).sort()).toEqual([
+      "/auth/demo-login",
+      "/home",
+      "/ping",
+      "/pix",
+      "/pix/{pixId}",
+    ]);
     expect(paths["/home"]).toHaveProperty("get");
     expect(paths["/auth/demo-login"]).toHaveProperty("post");
   });
@@ -71,6 +77,16 @@ describe("OpenAPI gerado dos schemas", () => {
     for (const [name, schema] of cents) {
       expect(schema.type, `campo ${name}`).toBe("integer");
     }
+  });
+
+  it("POST /pix: 202, header de idempotência obrigatório e 409 documentados", async () => {
+    const doc = await openapi();
+    const post = (doc.paths as Record<string, Json>)["/pix"]?.post as Json;
+    expect(Object.keys(post.responses as Json)).toEqual(
+      expect.arrayContaining(["202", "400", "401", "409", "502", "503", "504"]),
+    );
+    const header = (post.parameters as Json[]).find((p) => p.name === "idempotency-key");
+    expect(header).toMatchObject({ in: "header", required: true });
   });
 
   it("sem o login de demonstração (production), a rota some do contrato", async () => {

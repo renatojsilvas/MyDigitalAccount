@@ -65,6 +65,13 @@ describe("degradação parcial (critério de pronto da Fase 2)", () => {
     expect(res.json()).toEqual({
       balanceCents: 123_456,
       statement: { status: "unavailable", reason },
+      limits: {
+        status: "ok",
+        dailyLimitCents: 200_000,
+        usedTodayCents: 12_345,
+        availableTodayCents: 187_655,
+        resetsAt: "2026-11-13T03:00:00.000Z",
+      },
     });
   });
 

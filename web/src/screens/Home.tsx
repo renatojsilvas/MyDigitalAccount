@@ -87,6 +87,25 @@ export function Home({ api, onUnauthorized, onLogout }: HomeProps) {
             <p className="balance">{formatBRL(state.home.balanceCents)}</p>
           </section>
 
+          <section aria-label="Limite de Pix">
+            <h2>Limite diário de Pix</h2>
+            {state.home.limits.status === "unavailable" ? (
+              <p role="status">O limite está indisponível no momento.</p>
+            ) : (
+              <dl>
+                <dt>Disponível hoje</dt>
+                <dd className="limit-available">
+                  {formatBRL(state.home.limits.availableTodayCents)}
+                </dd>
+                <dt>Usado hoje</dt>
+                <dd>
+                  {formatBRL(state.home.limits.usedTodayCents)} de{" "}
+                  {formatBRL(state.home.limits.dailyLimitCents)}
+                </dd>
+              </dl>
+            )}
+          </section>
+
           <section aria-label="Extrato">
             <h2>Últimas transações</h2>
             {state.home.statement.status === "unavailable" ? (

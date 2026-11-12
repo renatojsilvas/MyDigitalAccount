@@ -1,5 +1,6 @@
 import type { Context } from "@opentelemetry/api";
 import type { LedgerClient, Posting } from "../../clients/ledger.js";
+import type { Limits, TransfersClient } from "../../clients/transfers.js";
 import type { BffError, DependencyError } from "../../errors.js";
 import { fail, ok, type Result } from "../../result.js";
 import type { HomeObserver } from "./observe.js";
@@ -12,10 +13,15 @@ export type StatementOutcome =
   | { readonly status: "ok"; readonly postings: readonly Posting[] }
   | { readonly status: "unavailable"; readonly reason: DegradedReason };
 
+export type LimitsOutcome =
+  | { readonly status: "ok"; readonly limits: Limits }
+  | { readonly status: "unavailable"; readonly reason: DegradedReason };
+
 /** Dados de domínio da home, antes do mapper. */
 export interface HomeData {
   readonly balanceCents: bigint;
   readonly statement: StatementOutcome;
+  readonly limits: LimitsOutcome;
 }
 
 export interface HomeService {
@@ -28,6 +34,7 @@ export interface HomeService {
 
 export interface HomeServiceDeps {
   readonly ledger: LedgerClient;
+  readonly transfers: TransfersClient;
   readonly observer: HomeObserver;
 }
 
@@ -39,6 +46,7 @@ function degradedReason(error: DependencyError): DegradedReason {
       return "unavailable";
     case "not_found":
     case "invalid_argument":
+    case "idempotency_key_reused":
     case "unexpected":
       return "error";
     default:
@@ -47,9 +55,10 @@ function degradedReason(error: DependencyError): DegradedReason {
 }
 
 /**
- * Agregação com degradação parcial (ADR-0005). As duas chamadas saem em paralelo, cada uma
+ * Agregação com degradação parcial (ADR-0005). As três chamadas saem em paralelo, cada uma
  * com o próprio prazo (definido no adaptador). O saldo é essencial: sem ele a home falha. O
- * extrato é opcional: se faltar, a home segue com ele marcado como indisponível.
+ * extrato (ledger) e os limites (transfers) são opcionais: se faltarem, a home segue com a
+ * seção marcada como indisponível.
  */
 export function createHomeService(deps: HomeServiceDeps): HomeService {
   return {
@@ -57,9 +66,10 @@ export function createHomeService(deps: HomeServiceDeps): HomeService {
       const call = { context, ...(signal ? { signal } : {}) };
       // allSettled: uma falha não cancela nem esconde a outra. O adaptador nunca lança (devolve
       // Result), então "rejected" só acontece por bug: o saldo propaga (500), o extrato degrada.
-      const [balance, statement] = await Promise.allSettled([
+      const [balance, statement, limits] = await Promise.allSettled([
         deps.ledger.getBalance(accountId, call),
         deps.ledger.listStatement(accountId, HOME_STATEMENT_SIZE, call),
+        deps.transfers.getLimits(accountId, call),
       ]);
 
       if (balance.status === "rejected") throw balance.reason;
@@ -80,7 +90,19 @@ export function createHomeService(deps: HomeServiceDeps): HomeService {
       if (outcome.status === "unavailable") {
         deps.observer.degraded("statement", outcome.reason, context);
       }
-      return ok({ balanceCents: balance.value.value, statement: outcome });
+
+      let limitsOutcome: LimitsOutcome;
+      if (limits.status === "rejected") {
+        limitsOutcome = { status: "unavailable", reason: "error" };
+      } else if (limits.value.ok) {
+        limitsOutcome = { status: "ok", limits: limits.value.value };
+      } else {
+        limitsOutcome = { status: "unavailable", reason: degradedReason(limits.value.error) };
+      }
+      if (limitsOutcome.status === "unavailable") {
+        deps.observer.degraded("limits", limitsOutcome.reason, context);
+      }
+      return ok({ balanceCents: balance.value.value, statement: outcome, limits: limitsOutcome });
     },
   };
 }

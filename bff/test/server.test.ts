@@ -58,7 +58,9 @@ describe("start", () => {
         }),
       });
       expect(messages).toEqual(["warmup"]); // já tinha acontecido quando start() devolveu
-      expect(lines.some((l) => l.includes("conexão com o ledger aquecida"))).toBe(true);
+      expect(
+        lines.some((l) => l.includes("conexão aquecida") && l.includes('"dependency":"ledger"')),
+      ).toBe(true);
     });
 
     it("ledger fora do ar: o boot segue, só avisa, e o /readyz continua 200", async () => {
@@ -71,7 +73,9 @@ describe("start", () => {
       });
       const base = `http://127.0.0.1:${String(server.address.port)}`;
       expect((await fetch(`${base}/readyz`)).status).toBe(200);
-      expect(lines.some((l) => l.includes("aquecimento do ledger falhou"))).toBe(true);
+      expect(
+        lines.some((l) => l.includes("aquecimento falhou") && l.includes('"dependency":"ledger"')),
+      ).toBe(true);
     });
 
     it("ledger que nunca responde: o boot espera no máximo o prazo da chamada", async () => {

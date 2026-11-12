@@ -24,9 +24,22 @@ export const statementSectionSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("unavailable"), reason: degradedReasonSchema }),
 ]);
 
+// Limite diário de Pix (dono: transfers). Opcional como o extrato: se faltar, a home segue.
+export const limitsSectionSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    dailyLimitCents: cents.describe("Limite diário de Pix"),
+    usedTodayCents: cents.describe("Já usado hoje (Pix não recusados nem estornados)"),
+    availableTodayCents: cents.describe("Disponível hoje"),
+    resetsAt: z.iso.datetime().describe("Quando o uso volta a zero (meia-noite em Brasília)"),
+  }),
+  z.object({ status: z.literal("unavailable"), reason: degradedReasonSchema }),
+]);
+
 export const homeResponseSchema = z.object({
   balanceCents: cents.describe("Saldo atual em centavos"),
   statement: statementSectionSchema,
+  limits: limitsSectionSchema,
 });
 
 export type HomeView = z.infer<typeof homeResponseSchema>;

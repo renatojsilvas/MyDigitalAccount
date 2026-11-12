@@ -17,9 +17,9 @@ export const homeRoutes: FastifyPluginCallbackZod<HomeRouteOptions> = (app, opts
       // onRequest: a identidade é checada antes de validar ou processar qualquer coisa.
       onRequest: (request, reply) => app.authenticate(request, reply),
       schema: {
-        summary: "Home: saldo e últimas transações",
+        summary: "Home: saldo, últimas transações e limite diário de Pix",
         description:
-          "O saldo é essencial: se faltar, a resposta é um erro. O extrato é opcional: se faltar, a resposta é 200 com `statement.status = unavailable`.",
+          "O saldo é essencial: se faltar, a resposta é um erro. O extrato e os limites são opcionais: se faltarem, a resposta é 200 com `status = unavailable` na seção.",
         tags: ["home"],
         security: [{ bearerAuth: [] }],
         response: { 200: homeResponseSchema, ...problemResponses },
@@ -33,9 +33,11 @@ export const homeRoutes: FastifyPluginCallbackZod<HomeRouteOptions> = (app, opts
       );
       if (!result.ok) return replyWithProblem(request, reply, result.error);
       const view = toHomeView(result.value);
-      if (view.statement.status === "unavailable") {
-        request.log = request.log.child({ degraded: ["statement"] });
-      }
+      const degraded = [
+        ...(view.statement.status === "unavailable" ? ["statement"] : []),
+        ...(view.limits.status === "unavailable" ? ["limits"] : []),
+      ];
+      if (degraded.length > 0) request.log = request.log.child({ degraded });
       return view;
     },
   );

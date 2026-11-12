@@ -10,6 +10,7 @@ import {
 import { hostname } from "node:os";
 import type { DestinationStream } from "pino";
 import { createLedgerClient } from "./clients/ledger.js";
+import { createTransfersClient } from "./clients/transfers.js";
 import type { Config } from "./config.js";
 import { createLifecycle, type Lifecycle } from "./lifecycle.js";
 import { authRoutes } from "./modules/auth/route.js";
@@ -18,6 +19,8 @@ import { homeRoutes } from "./modules/home/route.js";
 import { createHomeObserver } from "./modules/home/observe.js";
 import { createHomeService } from "./modules/home/service.js";
 import { pingRoutes } from "./modules/ping/route.js";
+import { pixRoutes } from "./modules/pix/route.js";
+import { createPixService } from "./modules/pix/service.js";
 import { createPingService } from "./modules/ping/service.js";
 import { createClientTelemetryInterceptor } from "./platform/connect-telemetry.js";
 import { createLogger } from "./platform/logger.js";
@@ -39,6 +42,8 @@ export interface AppOverrides {
   readonly telemetry?: TelemetryOverrides;
   /** Recebe os interceptors (telemetria) e devolve o transporte do ledger. */
   readonly ledgerTransport?: (interceptors: Interceptor[]) => Transport;
+  /** Idem, para o transfers. */
+  readonly transfersTransport?: (interceptors: Interceptor[]) => Transport;
   readonly stdout?: DestinationStream;
   /** Identificador da instância; por padrão, o hostname (único por contêiner). */
   readonly instanceId?: string;
@@ -99,6 +104,22 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
     balanceTimeoutMs: config.ledgerBalanceTimeoutMs,
     statementTimeoutMs: config.ledgerStatementTimeoutMs,
   });
+  // O transfers tem o seu interceptor: métricas e spans de cliente com dependency=transfers, e o
+  // traceparent propagado, para o Pix ter um trace só do BFF à última etapa da saga.
+  const transfersTelemetry = createClientTelemetryInterceptor({
+    tracer,
+    meter,
+    propagator: telemetry.propagator,
+    dependency: "transfers",
+  });
+  const makeTransfersTransport =
+    overrides.transfersTransport ??
+    ((interceptors: Interceptor[]) =>
+      createGrpcTransport({ baseUrl: config.transfersUrl, interceptors }));
+  const transfers = createTransfersClient(makeTransfersTransport([transfersTelemetry]), {
+    timeoutMs: config.transfersTimeoutMs,
+    limitsTimeoutMs: config.transfersLimitsTimeoutMs,
+  });
   const lifecycle = createLifecycle();
 
   const app = Fastify({
@@ -131,7 +152,10 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
   });
 
   void app.withTypeProvider<ZodTypeProvider>().register(homeRoutes, {
-    service: createHomeService({ ledger, observer: createHomeObserver(meter) }),
+    service: createHomeService({ ledger, transfers, observer: createHomeObserver(meter) }),
+  });
+  void app.withTypeProvider<ZodTypeProvider>().register(pixRoutes, {
+    service: createPixService({ transfers }),
   });
   if (config.demoLogin) {
     void app.withTypeProvider<ZodTypeProvider>().register(authRoutes, {
@@ -146,14 +170,20 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
   });
 
   const warmUp = async (): Promise<void> => {
-    const result = await ledger.ping("warmup", { context: ROOT_CONTEXT });
-    if (result.ok) {
-      baseLogger.info("conexão com o ledger aquecida");
-    } else {
-      baseLogger.warn(
-        { dependency_error: result.error.kind },
-        "aquecimento do ledger falhou; o BFF segue, a primeira chamada pagará a partida a frio",
-      );
+    const call = { context: ROOT_CONTEXT };
+    const results = await Promise.all([
+      ledger.ping("warmup", call).then((r) => ["ledger", r] as const),
+      transfers.ping("warmup", call).then((r) => ["transfers", r] as const),
+    ]);
+    for (const [dependency, result] of results) {
+      if (result.ok) {
+        baseLogger.info({ dependency }, "conexão aquecida");
+      } else {
+        baseLogger.warn(
+          { dependency, dependency_error: result.error.kind },
+          "aquecimento falhou; o BFF segue, a primeira chamada pagará a partida a frio",
+        );
+      }
     }
   };
 

@@ -2,7 +2,7 @@ import { trace, type Context, type Meter } from "@opentelemetry/api";
 import type { DegradedReason } from "./schema.js";
 
 /** Seções opcionais da home que podem faltar. Conjunto fixo: é rótulo de métrica. */
-export type HomeSection = "statement";
+export type HomeSection = "statement" | "limits";
 
 /** Porta de observabilidade do serviço da home: o serviço não conhece OpenTelemetry. */
 export interface HomeObserver {

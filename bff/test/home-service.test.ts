@@ -1,6 +1,7 @@
 import { ROOT_CONTEXT } from "@opentelemetry/api";
 import { describe, expect, it } from "vitest";
 import { createLedgerClient } from "../src/clients/ledger.js";
+import { createTransfersClient } from "../src/clients/transfers.js";
 import { toHomeView } from "../src/modules/home/mapper.js";
 import type { HomeObserver, HomeSection } from "../src/modules/home/observe.js";
 import { homeResponseSchema, type DegradedReason } from "../src/modules/home/schema.js";
@@ -16,6 +17,7 @@ import {
   posting,
   type LedgerImpl,
 } from "./fake-ledger.js";
+import { fakeTransfersTransport, okLimits, type TransfersImpl } from "./fake-transfers.js";
 
 interface Degradation {
   section: HomeSection;
@@ -26,9 +28,14 @@ interface Degradation {
 interface Deadlines {
   balanceMs?: number;
   statementMs?: number;
+  limitsMs?: number;
 }
 
-function setup(impl: LedgerImpl, deadlines: Deadlines = {}) {
+function setup(
+  impl: LedgerImpl,
+  deadlines: Deadlines = {},
+  transfersImpl: TransfersImpl = { getLimits: okLimits },
+) {
   const degradations: Degradation[] = [];
   const observer: HomeObserver = {
     degraded: (section, reason) => void degradations.push({ section, reason }),
@@ -38,7 +45,11 @@ function setup(impl: LedgerImpl, deadlines: Deadlines = {}) {
     balanceTimeoutMs: deadlines.balanceMs ?? 10_000,
     statementTimeoutMs: deadlines.statementMs ?? 10_000,
   });
-  return { service: createHomeService({ ledger, observer }), degradations };
+  const transfers = createTransfersClient(fakeTransfersTransport(transfersImpl), {
+    timeoutMs: 10_000,
+    limitsTimeoutMs: deadlines.limitsMs ?? 10_000,
+  });
+  return { service: createHomeService({ ledger, transfers, observer }), degradations };
 }
 
 const okBalance: LedgerImpl["getBalance"] = () => ({ accountId: "a", balanceCents: 123_456n });
@@ -174,10 +185,71 @@ describe("serviço da home", () => {
   });
 });
 
+describe("limites na home (Fase 3)", () => {
+  it("vêm do transfers, em paralelo com o ledger", async () => {
+    const { service, degradations } = setup({ getBalance: okBalance, listStatement: okStatement });
+    const res = await service.home("a", ROOT_CONTEXT);
+    expect(res.ok && res.value.limits).toEqual({
+      status: "ok",
+      limits: {
+        dailyLimitCents: 200_000n,
+        usedTodayCents: 12_345n,
+        availableTodayCents: 187_655n,
+        resetsAt: new Date("2026-11-13T03:00:00.000Z"),
+      },
+    });
+    expect(degradations).toEqual([]);
+  });
+
+  it.each([
+    [
+      "lento",
+      { getLimits: (_r: unknown, ctx: { signal: AbortSignal }) => hang(ctx) },
+      { limitsMs: 20 },
+      "timeout",
+    ],
+    [
+      "fora do ar",
+      {
+        getLimits: () => {
+          throw new ConnectError("down", Code.Unavailable);
+        },
+      },
+      {},
+      "unavailable",
+    ],
+  ] as const)(
+    "transfers %s: home com saldo e extrato, limites indisponíveis",
+    async (_n, impl, dl, reason) => {
+      const { service, degradations } = setup(
+        { getBalance: okBalance, listStatement: okStatement },
+        dl,
+        impl,
+      );
+      const res = await service.home("a", ROOT_CONTEXT);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.balanceCents).toBe(123_456n);
+      expect(res.value.statement.status).toBe("ok");
+      expect(res.value.limits).toEqual({ status: "unavailable", reason });
+      expect(degradations).toEqual([{ section: "limits", reason }]);
+    },
+  );
+});
+
 describe("mapper da home", () => {
   it("monta o view model e ele cumpre o schema de saída", () => {
     const view = toHomeView({
       balanceCents: 123_456n,
+      limits: {
+        status: "ok",
+        limits: {
+          dailyLimitCents: 200_000n,
+          usedTodayCents: 12_345n,
+          availableTodayCents: 187_655n,
+          resetsAt: new Date("2026-11-13T03:00:00.000Z"),
+        },
+      },
       statement: {
         status: "ok",
         postings: [
@@ -194,6 +266,13 @@ describe("mapper da home", () => {
     });
     expect(view).toEqual({
       balanceCents: 123_456,
+      limits: {
+        status: "ok",
+        dailyLimitCents: 200_000,
+        usedTodayCents: 12_345,
+        availableTodayCents: 187_655,
+        resetsAt: "2026-11-13T03:00:00.000Z",
+      },
       statement: {
         status: "ok",
         items: [
@@ -216,8 +295,13 @@ describe("mapper da home", () => {
       toHomeView({
         balanceCents: 0n,
         statement: { status: "unavailable", reason: "timeout" },
+        limits: { status: "unavailable", reason: "unavailable" },
       }),
-    ).toEqual({ balanceCents: 0, statement: { status: "unavailable", reason: "timeout" } });
+    ).toEqual({
+      balanceCents: 0,
+      statement: { status: "unavailable", reason: "timeout" },
+      limits: { status: "unavailable", reason: "unavailable" },
+    });
   });
 
   it("valor acima do inteiro seguro do JSON falha em vez de arredondar", () => {
@@ -225,6 +309,7 @@ describe("mapper da home", () => {
       toHomeView({
         balanceCents: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
         statement: { status: "ok", postings: [] },
+        limits: { status: "unavailable", reason: "error" },
       }),
     ).toThrow(RangeError);
   });

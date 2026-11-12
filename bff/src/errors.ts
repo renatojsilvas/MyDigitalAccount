@@ -10,6 +10,8 @@ export type DependencyError =
   | { readonly kind: "unavailable"; readonly dependency: string }
   | { readonly kind: "not_found"; readonly dependency: string }
   | { readonly kind: "invalid_argument"; readonly detail: string }
+  /** A chave de idempotência já foi usada com outro pedido (o transfers recusou). */
+  | { readonly kind: "idempotency_key_reused" }
   | { readonly kind: "unexpected"; readonly dependency: string };
 
 export type DependencyResult<T> = Result<T, DependencyError>;
@@ -56,6 +58,13 @@ export function problemOf(error: BffError): ProblemResponse {
       };
     case "invalid_argument":
       return problem(400, "invalid_argument", "Requisição inválida", error.detail);
+    case "idempotency_key_reused":
+      return problem(
+        409,
+        "idempotency_key_reused",
+        "A chave de idempotência já foi usada com outro pedido",
+        "Repita com a mesma chave só o mesmo pedido; um pedido novo precisa de uma chave nova.",
+      );
     case "unexpected":
       // Sem detalhe: erro inesperado de dependência não vaza para o cliente.
       return problem(502, "dependency_error", "Falha ao consultar a dependência");

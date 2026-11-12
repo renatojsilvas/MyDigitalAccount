@@ -12,6 +12,14 @@ const item = {
   postedAt: "2026-11-12T10:00:00.000Z",
 } as const;
 
+const limits = {
+  status: "ok",
+  dailyLimitCents: 200_000,
+  usedTodayCents: 12_345,
+  availableTodayCents: 187_655,
+  resetsAt: "2026-11-13T03:00:00.000Z",
+} as const;
+
 function renderHome(handler: (request: Request) => Response, overrides = {}) {
   const props = { onUnauthorized: vi.fn(), onLogout: vi.fn(), ...overrides };
   render(<Home api={fakeApi(handler)} {...props} />);
@@ -26,6 +34,7 @@ describe("Home", () => {
       return Response.json({
         balanceCents: 500_000,
         statement: { status: "ok", items: [item] },
+        limits,
       });
     });
 
@@ -42,6 +51,7 @@ describe("Home", () => {
       Response.json({
         balanceCents: 123_456,
         statement: { status: "unavailable", reason: "timeout" },
+        limits,
       }),
     );
 
@@ -50,6 +60,32 @@ describe("Home", () => {
     expect(within(extrato).getByRole("alert").textContent).toContain("extrato está indisponível");
     expect(within(extrato).queryByRole("list")).toBeNull();
     expect(within(extrato).getByRole("button", { name: "Tentar novamente" })).toBeTruthy();
+  });
+
+  it("mostra o limite diário de Pix vindo do BFF", async () => {
+    renderHome(() =>
+      Response.json({ balanceCents: 500_000, statement: { status: "ok", items: [] }, limits }),
+    );
+    const secao = await screen.findByRole("region", { name: "Limite de Pix" });
+    expect(within(secao).getByText("R$ 1.876,55")).toBeTruthy();
+    expect(within(secao).getByText(/R\$ 123,45 de R\$ 2\.000,00/)).toBeTruthy();
+  });
+
+  // Degradação parcial (Fase 3): sem os limites, a home segue com saldo e extrato.
+  it("com os limites indisponíveis, mostra saldo e extrato e um aviso no lugar dos limites", async () => {
+    renderHome(() =>
+      Response.json({
+        balanceCents: 500_000,
+        statement: { status: "ok", items: [item] },
+        limits: { status: "unavailable", reason: "unavailable" },
+      }),
+    );
+    expect(await screen.findByText("R$ 5.000,00", { selector: ".balance" })).toBeTruthy();
+    const secao = screen.getByRole("region", { name: "Limite de Pix" });
+    expect(within(secao).getByRole("status").textContent).toContain("indisponível");
+    expect(
+      within(screen.getByRole("region", { name: "Extrato" })).getByText("Saldo inicial"),
+    ).toBeTruthy();
   });
 
   it("volta ao login quando o BFF responde 401", async () => {

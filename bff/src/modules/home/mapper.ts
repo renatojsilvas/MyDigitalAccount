@@ -1,14 +1,7 @@
 import type { Posting } from "../../clients/ledger.js";
+import { centsToNumber } from "../../money.js";
 import type { HomeData } from "./service.js";
 import type { HomeView, StatementItemView } from "./schema.js";
-
-/** `bigint` do protobuf → inteiro do JSON. Estourar o limite seguro é falha, nunca arredondamento. */
-export function centsToNumber(cents: bigint): number {
-  if (cents > BigInt(Number.MAX_SAFE_INTEGER) || cents < BigInt(Number.MIN_SAFE_INTEGER)) {
-    throw new RangeError("valor em centavos fora do intervalo inteiro seguro do JSON");
-  }
-  return Number(cents);
-}
 
 function toStatementItem(p: Posting): StatementItemView {
   return {
@@ -29,5 +22,15 @@ export function toHomeView(data: HomeData): HomeView {
       data.statement.status === "ok"
         ? { status: "ok", items: data.statement.postings.map(toStatementItem) }
         : { status: "unavailable", reason: data.statement.reason },
+    limits:
+      data.limits.status === "ok"
+        ? {
+            status: "ok",
+            dailyLimitCents: centsToNumber(data.limits.limits.dailyLimitCents),
+            usedTodayCents: centsToNumber(data.limits.limits.usedTodayCents),
+            availableTodayCents: centsToNumber(data.limits.limits.availableTodayCents),
+            resetsAt: data.limits.limits.resetsAt.toISOString(),
+          }
+        : { status: "unavailable", reason: data.limits.reason },
   };
 }

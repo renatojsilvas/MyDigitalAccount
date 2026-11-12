@@ -133,3 +133,18 @@ serviço. O `web/` tem **só o alvo `dev`** (Vite com recarga automática e o pr
   com `status`.
 - Dois timeouts para configurar e calibrar; a calibração real vem da medição (Fase 7).
 - Custo aceito: se o saldo falha, o usuário vê um erro, não um valor "aproximado".
+
+## Atualização (Fase 3): Pix e limites
+
+- **Limites na home**: seção opcional `limits` no mesmo molde do extrato (`status = ok | unavailable`, motivo), vinda
+  do `transfers` em paralelo com o ledger, com prazo próprio (`TRANSFERS_LIMITS_TIMEOUT_MS`, 200 ms). Sem o
+  `transfers`, a home segue com saldo e extrato; a métrica `bff.home.degraded` ganha `home.section = limits`.
+- **`modules/pix`**: o BFF só repassa. `POST /pix` exige `Idempotency-Key` e o entrega intacto ao `transfers`
+  (dono da idempotência do aceite); responde 202 com `Location`. A conta vem sempre do token. A validação no BFF é
+  só de forma (11 dígitos, centavos inteiros); o dígito verificador do CPF e todas as regras do Pix são do
+  `transfers` (regra 1), e uma recusa de formato volta como 400 com o campo, nunca com o valor. Chave reutilizada
+  com outro pedido: 409 (`idempotency_key_reused`).
+- **`clients/transfers.ts`** é a segunda *anti-corruption layer*: os enums do contrato viram nomes do BFF num
+  `switch` exaustivo (`satisfies never`), então um estado novo no `.proto` quebra a compilação do BFF em vez de
+  quebrar em produção.
+- O aquecimento do boot cobre ledger e `transfers`, em paralelo, sem nunca falhar o boot.

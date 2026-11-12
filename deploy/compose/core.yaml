@@ -401,6 +401,10 @@ services:
       LEDGER_TIMEOUT_MS: ${LEDGER_TIMEOUT_MS:-1000}
       LEDGER_BALANCE_TIMEOUT_MS: ${LEDGER_BALANCE_TIMEOUT_MS:-250}
       LEDGER_STATEMENT_TIMEOUT_MS: ${LEDGER_STATEMENT_TIMEOUT_MS:-200}
+      TRANSFERS_GRPC_URL: http://transfers:50081
+      TRANSFERS_TIMEOUT_MS: ${TRANSFERS_TIMEOUT_MS:-1000}
+      # Seção de limites da home (opcional, ADR-0005): menor que o SLO de 300 ms, como o extrato.
+      TRANSFERS_LIMITS_TIMEOUT_MS: ${TRANSFERS_LIMITS_TIMEOUT_MS:-200}
       BFF_JWT_SECRET: ${BFF_JWT_SECRET:?defina BFF_JWT_SECRET no .env (mínimo 32 caracteres)}
       BFF_JWT_TTL_SECONDS: ${BFF_JWT_TTL_SECONDS:-900}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -409,6 +413,10 @@ services:
     depends_on:
       ledger:
         condition: service_healthy
+      # service_started: sem o transfers, a home segue com os limites indisponíveis (degradação
+      # parcial) e só o Pix fica fora; a dependência só ordena a subida.
+      transfers:
+        condition: service_started
 
   # Front-end de demonstração (seção 6.1 do plano): só imagem de desenvolvimento (Vite). O proxy
   # /api -> BFF vive no servidor do Vite, então não há CORS. Sem imagem final: não é um serviço de produção.

@@ -24,6 +24,7 @@ import type { FastifyInstance } from "fastify";
 import { buildApp, type BuiltApp } from "../src/app.js";
 import { loadConfig, type Config } from "../src/config.js";
 import type { LedgerImpl } from "./fake-ledger.js";
+import { fakeTransfersTransport, okLimits, type TransfersImpl } from "./fake-transfers.js";
 
 export type LedgerBehavior = (
   req: PingRequest,
@@ -58,6 +59,8 @@ export function testConfig(env: Record<string, string> = {}): Config {
     LEDGER_TIMEOUT_MS: "10000",
     LEDGER_BALANCE_TIMEOUT_MS: "10000",
     LEDGER_STATEMENT_TIMEOUT_MS: "10000",
+    TRANSFERS_TIMEOUT_MS: "10000",
+    TRANSFERS_LIMITS_TIMEOUT_MS: "10000",
     BFF_JWT_SECRET: TEST_JWT_SECRET,
     ...env,
   });
@@ -93,7 +96,7 @@ export function createHarness(
   behavior: LedgerBehavior = echo,
   config: Config = testConfig(),
   /** `realTransport`: usa o transporte gRPC de verdade (config.ledgerUrl) em vez do ledger em memória. */
-  options: { realTransport?: boolean; ledger?: LedgerImpl } = {},
+  options: { realTransport?: boolean; ledger?: LedgerImpl; transfers?: TransfersImpl } = {},
 ): Harness {
   const spans = new InMemorySpanExporter();
   const logs = new InMemoryLogRecordExporter();
@@ -107,6 +110,9 @@ export function createHarness(
 
   const built = buildApp(config, {
     instanceId: "bff-test-1",
+    // O transfers é sempre o falso em memória; por padrão, só responde os limites.
+    transfersTransport: (interceptors: Interceptor[]) =>
+      fakeTransfersTransport(options.transfers ?? { getLimits: okLimits }, interceptors),
     telemetry: { spanExporter: spans, metricReader: reader, logExporter: logs },
     stdout: { write: (line: string) => void lines.push(line) },
     ...(options.realTransport
