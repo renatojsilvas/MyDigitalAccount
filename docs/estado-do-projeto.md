@@ -307,8 +307,6 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
 - O `.devcontainer` **nunca rodou** (abrir o VS Code dentro do contêiner `tools`); só o CI foi validado.
 
 **Decisões pendentes da Fase 2 (suas)**
-- **Sem imagem final do `web`** (só `dev`, com o proxy do Vite): foge da regra de imagem final por serviço. Se quiser,
-  nginx não-root com digest fixado.
 - **`BFF_JWT_SECRET` no seu `.env`** (obrigatório; valor de desenvolvimento no `.env.example`). Sem ele, nenhum
   `docker compose` funciona. O CI copia o `.env.example`, então não é afetado.
 
@@ -352,6 +350,8 @@ todos os jobs**, inclusive o gate do k6, que passou com os limites calibrados no
 unificado entre BFF e ledger; teste do ping que oscilava (espera com prazo).
 
 **Desvios do plano (registrados nos ADRs)**
+- **`web/` sem imagem final** (só o alvo `dev`, com o proxy do Vite): front de demonstração da seção 6.1, que não é um
+  serviço de produção. Desvio **aceito**, registrado no ADR-0005 (seção 5), com o que fazer se isso mudar.
 - Pasta `testkit/` (módulo Go) fora do layout da seção 4; pastas `deploy/tempo`, `deploy/loki`, `deploy/obs`,
   `deploy/postgres` além das listadas.
 - `internal/accountotel` (adaptador de métricas de negócio) e `cmd/seed` além do layout da seção 4.

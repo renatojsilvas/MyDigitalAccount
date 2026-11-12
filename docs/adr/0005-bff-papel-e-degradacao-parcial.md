@@ -103,6 +103,20 @@ Regras:
 - Gatilho automático: **nenhum** nesta fase. A degradação é o comportamento de proteção em si. O alerta por esse
   contador, se fizer sentido, vem na Fase 6.
 
+### 5. Desvio aceito: o front de demonstração não tem imagem final
+
+A regra do projeto é separar a imagem de desenvolvimento da imagem final (multi-stage, mínima, sem root) de cada
+serviço. O `web/` tem **só o alvo `dev`** (Vite com recarga automática e o proxy `/api` para o BFF, que evita CORS).
+
+- **Por quê**: é o front de demonstração da seção 6.1 do plano. Existe para ver o sistema funcionando no navegador,
+  não é um serviço de produção, e o plano o define com proxy do Vite em desenvolvimento. Uma imagem final exigiria um
+  servidor estático com o proxy reimplementado (por exemplo, nginx não-root com digest fixado) para algo que nunca
+  será implantado.
+- **Consequência**: o CI não constrói nada para o `web` além do lint e dos testes. Se o front um dia deixar de ser só
+  demonstração, cria-se o alvo `final` (build do Vite servido por nginx não-root, base fixada por tag e digest) e
+  reavalia-se onde mora o proxy.
+- **Decisão**: desvio aceito, registrado aqui e no `docs/estado-do-projeto.md`.
+
 ## Alternativas consideradas
 
 - **Tudo ou nada** (qualquer falha derruba a home): simples, mas uma lentidão só no extrato (a chamada mais pesada)
