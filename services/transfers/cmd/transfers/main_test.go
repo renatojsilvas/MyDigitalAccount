@@ -63,6 +63,8 @@ func baseEnv(db *testpg.Database, user, password string) map[string]string {
 		"POSTGRES_HOST": db.Config.Host, "POSTGRES_PORT": strconv.Itoa(int(db.Config.Port)),
 		"TRANSFERS_DB_USER": user, "TRANSFERS_DB_PASSWORD": password, "TRANSFERS_DB_NAME": db.Name,
 		"TRANSFERS_REQUEST_HASH_KEY": "segredo-de-teste-com-32-bytes-ok",
+		// As dependências não existem neste teste: o aquecimento desiste rápido (nunca falha o boot).
+		"TRANSFERS_WARMUP_TIMEOUT": "100ms",
 	}
 }
 

@@ -145,9 +145,13 @@ type Transfer struct {
 	// (ADR-0007, seção 5).
 	SettlementMaybeSent bool
 	ConfirmationOverdue bool
-	Trace               map[string]string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// PendingSince é quando o Pix entrou em PENDING_CONFIRMATION; o prazo máximo conta daí.
+	PendingSince time.Time
+	// ConfirmationAttempts é quantas consultas de status já foram feitas sem resposta definitiva.
+	ConfirmationAttempts int
+	Trace                map[string]string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 // Change é uma linha do histórico de estados.

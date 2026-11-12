@@ -344,7 +344,7 @@
     {
       "id": 12,
       "type": "row",
-      "title": "Dependências",
+      "title": "Confirmação (seção 4.5)",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -357,6 +357,123 @@
     {
       "id": 13,
       "type": "timeseries",
+      "title": "Pix pendentes de confirmação",
+      "description": "Débito feito, sem resposta definitiva do SPI; o cliente vê 'em processamento'. Além do prazo: continuam pendentes e esperam a conciliação (Fase 5).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(transfers_confirmation_pending{job=\"transfers\"})",
+          "legendFormat": "pendentes"
+        },
+        {
+          "refId": "B",
+          "expr": "max(transfers_confirmation_pending_overdue{job=\"transfers\"})",
+          "legendFormat": "além do prazo"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Idade do pendente mais antigo",
+      "description": "Base do alerta da Fase 6: pendente além do prazo máximo (TRANSFERS_CONFIRM_DEADLINE, 10 min).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(transfers_confirmation_oldest_pending_age_seconds{job=\"transfers\"})",
+          "legendFormat": "mais antigo"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Consultas de status por desfecho",
+      "description": "not_found não prova que não liquidou (pode estar em trânsito); failed = SPI ou consulta fora do ar.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (transfers_status_query_result) (rate(transfers_confirmation_status_queries_total{job=\"transfers\"}[$__rate_interval]))",
+          "legendFormat": "{{transfers_status_query_result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Dependências",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
       "title": "Latência p99 das chamadas",
       "description": "Do lado do transfers (cliente gRPC), por método. Os prazos: antifraude 300 ms, ledger 500 ms, SPI 1 s.",
       "datasource": {
@@ -367,7 +484,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 27
+        "y": 36
       },
       "targets": [
         {
@@ -388,7 +505,7 @@
       }
     },
     {
-      "id": 14,
+      "id": 18,
       "type": "timeseries",
       "title": "Falhas das chamadas por código",
       "description": "Só falhas de infraestrutura; recusas de negócio (NOT_FOUND, FAILED_PRECONDITION) não aparecem aqui.",
@@ -400,7 +517,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 27
+        "y": 36
       },
       "targets": [
         {
@@ -421,7 +538,7 @@
       }
     },
     {
-      "id": 15,
+      "id": 19,
       "type": "timeseries",
       "title": "Retries por dependência",
       "description": "Novas tentativas com backoff exponencial e full jitter.",
@@ -433,7 +550,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 27
+        "y": 36
       },
       "targets": [
         {
@@ -454,7 +571,7 @@
       }
     },
     {
-      "id": 16,
+      "id": 20,
       "type": "timeseries",
       "title": "Estado do circuit breaker",
       "description": "0 fechado, 1 meio-aberto, 2 aberto. Aberto por mais de 1 min vira alerta na Fase 6.",
@@ -466,7 +583,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 27
+        "y": 36
       },
       "targets": [
         {
@@ -487,7 +604,7 @@
       }
     },
     {
-      "id": 17,
+      "id": 21,
       "type": "row",
       "title": "Aceite e idempotência",
       "collapsed": false,
@@ -495,12 +612,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 44
       },
       "panels": []
     },
     {
-      "id": 18,
+      "id": 22,
       "type": "timeseries",
       "title": "Aceites por minuto",
       "description": "replay = repetição pela mesma chave (devolve o mesmo Pix, sem criar outro).",
@@ -512,7 +629,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 36
+        "y": 45
       },
       "targets": [
         {
@@ -533,7 +650,7 @@
       }
     },
     {
-      "id": 19,
+      "id": 23,
       "type": "timeseries",
       "title": "Valor aceito por minuto (R$)",
       "description": "Soma dos Pix novos, em reais (centavos / 100).",
@@ -545,7 +662,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 36
+        "y": 45
       },
       "targets": [
         {
@@ -566,7 +683,7 @@
       }
     },
     {
-      "id": 20,
+      "id": 24,
       "type": "timeseries",
       "title": "Conflitos de idempotência e leases perdidos",
       "description": "Chave reutilizada com outro pedido; lease tomado por outro runner (fencing token barrou a escrita).",
@@ -578,7 +695,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 36
+        "y": 45
       },
       "targets": [
         {
@@ -604,7 +721,7 @@
       }
     },
     {
-      "id": 21,
+      "id": 25,
       "type": "row",
       "title": "Logs e traces",
       "collapsed": false,
@@ -612,12 +729,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 53
       },
       "panels": []
     },
     {
-      "id": 22,
+      "id": 26,
       "type": "logs",
       "title": "Logs do transfers",
       "description": "Um log por chamada gRPC e um aviso por etapa sem resposta definitiva; trace_id vira link.",
@@ -629,7 +746,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 45
+        "y": 54
       },
       "targets": [
         {
@@ -646,7 +763,7 @@
       }
     },
     {
-      "id": 23,
+      "id": 27,
       "type": "table",
       "title": "Sagas com erro",
       "description": "Traces com alguma etapa da saga em erro. Um Pix tem um trace só: aceite, etapas e chamadas a antifraude, ledger e SPI.",
@@ -658,7 +775,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 45
+        "y": 54
       },
       "targets": [
         {

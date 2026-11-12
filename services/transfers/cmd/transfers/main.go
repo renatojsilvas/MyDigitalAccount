@@ -154,6 +154,20 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		defer func() { _ = conn.Close() }()
 		conns[name] = conn
 	}
+	// Aquecimento: abre as conexões antes de aceitar Pix, para o primeiro não pagar a partida a
+	// frio (sem isso, o primeiro Pix depois de um reinício estourava o prazo do antifraude e era
+	// recusado). Em paralelo e nunca derruba o boot: dependência fora do ar só gera aviso.
+	var warm errgroup.Group
+	for name, conn := range conns {
+		warm.Go(func() error {
+			if !grpcclient.WarmUp(ctx, conn, cfg.Dependencies.WarmUpTimeout) {
+				logger.WarnContext(ctx, "aquecimento da conexão falhou; a primeira chamada pagará a partida a frio",
+					"dependency", name)
+			}
+			return nil
+		})
+	}
+	_ = warm.Wait()
 	breaker := resilience.DefaultBreaker()
 	quick := func(timeout time.Duration) resilience.Policy {
 		return resilience.Policy{Attempts: 3, Base: 50 * time.Millisecond, Max: 300 * time.Millisecond, Timeout: timeout}
@@ -165,7 +179,9 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		SettleBackoff: resilience.Policy{
 			Base: cfg.Saga.SettleBackoffBase, Max: cfg.Saga.SettleBackoffMax, Timeout: cfg.Saga.SettleTimeout,
 		},
-		ConfirmAfter: cfg.Saga.ConfirmAfter,
+		ConfirmAfter:    cfg.Saga.ConfirmAfter,
+		ConfirmInterval: resilience.Policy{Base: cfg.Saga.ConfirmAfter, Max: cfg.Saga.ConfirmIntervalMax},
+		ConfirmDeadline: cfg.Saga.ConfirmDeadline, ConfirmWorkers: cfg.Saga.ConfirmWorkers,
 	}, saga.Deps{
 		Store: store,
 		Antifraud: clients.NewAntifraude(antifraudev1.NewAntifraudeServiceClient(conns["antifraude"]),
@@ -176,6 +192,9 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 			clients.NewDependency("spi", breaker, resilience.Policy{Attempts: 1}, telSaga)),
 		Tracing: telSaga, Observer: telSaga, Logger: logger,
 	})
+	if err := telSaga.RegisterPending(tel.Meter, store.PendingStats); err != nil {
+		return fmt.Errorf("métricas de pendentes: %w", err)
+	}
 	svc := pix.NewService(store, cal, cfg.RequestHashKey, cfg.DailyLimitCents,
 		pix.WithObserver(observer), pix.WithNotify(runner.Notify))
 
@@ -211,6 +230,8 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	g.Go(func() error { return adminSrv.Serve(gctx, adminLis, cfg.ShutdownTimeout) })
 	// O runner da saga: para de pegar trabalho no sinal e espera as etapas em andamento.
 	g.Go(func() error { return runner.Run(gctx) })
+	// O worker de confirmação dos Pix pendentes (seção 4.5): pool próprio, lê do banco.
+	g.Go(func() error { return runner.RunConfirmations(gctx) })
 	g.Go(func() error {
 		<-gctx.Done()
 		adminSrv.SetReady(false)

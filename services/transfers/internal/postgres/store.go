@@ -233,7 +233,8 @@ func (s *Store) Transition(ctx context.Context, lease pix.Lease, tr pix.Transiti
 		n, err := q.TransitionTransfer(ctx, sqlcgen.TransitionTransferParams{
 			ToState: tr.To.String(), Reason: reason,
 			DestinationAccountID: uuidToDB(tr.DestinationAccountID), DebitEntryID: uuidToDB(tr.DebitEntryID),
-			NextRunAt: tr.NextRunAt, UpdatedAt: tr.At,
+			PendingSince: pendingSince(tr),
+			NextRunAt:    tr.NextRunAt, UpdatedAt: tr.At,
 			ID: lease.TransferID, FromState: tr.From.String(), LeaseToken: lease.Token,
 		})
 		if err != nil {
@@ -271,4 +272,12 @@ func markReserved(ctx context.Context, q *sqlcgen.Queries, lease pix.Lease, rese
 		return pix.ErrLeaseLost
 	}
 	return nil
+}
+
+// pendingSince marca a entrada em PENDING_CONFIRMATION; nas outras transições, mantém o gravado.
+func pendingSince(tr pix.Transition) pgtype.Timestamptz {
+	if tr.To != pix.StatePendingConfirmation {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: tr.At, Valid: true}
 }

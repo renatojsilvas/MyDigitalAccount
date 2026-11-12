@@ -303,6 +303,20 @@ Num Pix terminado (`COMPLETED` ou `REVERSED`), a `settlement` fecha em zero para
     formato, que a etapa repetiria para sempre.
   - A validação com dependência fora do ar (inclusive durante a subida dos serviços) recusa o Pix com
     `DEPENDENCY_UNAVAILABLE`, sem mover dinheiro; o span `pix.saga.accepted` mostra a causa.
+- **Implementação (passo 8)**:
+  - O worker de confirmação usa o mesmo mecanismo de fila e lease, num loop e num pool próprios
+    (`TRANSFERS_CONFIRM_WORKERS`): pendentes demorados nunca atrasam Pix novos. O prazo máximo conta de
+    `pending_since`, gravado na entrada em `PENDING_CONFIRMATION` (migration `00003`).
+  - O intervalo entre consultas usa *equal jitter* (metade fixa, metade sorteada), não *full jitter*: a espera nunca
+    sorteia perto de zero, o que martelaria um SPI degradado.
+  - Pendentes, além do prazo e idade do mais antigo são lidos do banco a cada coleta de métricas: valem para todas
+    as instâncias, não só para a que coleta.
+  - **Partida a frio**: o primeiro Pix depois de um reinício foi recusado com `DEPENDENCY_UNAVAILABLE`, porque a
+    conexão com o antifraude ainda não estava pronta. O boot agora aquece as conexões (`platform/grpcclient.WarmUp`,
+    nunca derruba o boot), como o BFF faz desde a Fase 2.
+  - Teste com o Toxiproxy entre transfers e SPI: numa conexão nova, um prazo estourado antes de o servidor responder
+    o *preface* do HTTP/2 impede o pedido de sair. Do lado do cliente, "não saiu" e "saiu e a resposta não voltou"
+    são indistinguíveis, o que confirma a regra: só o circuito aberto (ou o marcador falso) prova "não enviado".
 - Pix em `PENDING_CONFIRMATION` além do prazo **não se resolvem sozinhos** até a Fase 5. É intencional (regra 10).
 - Um ledger fora do ar por muito tempo deixa Pix parados em `VALIDATED`, `REVERSING` ou `SETTLED`. A métrica de idade
   por estado mostra isso, e o alerta vem na Fase 6.

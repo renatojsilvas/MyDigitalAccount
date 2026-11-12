@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
@@ -66,5 +67,45 @@ func TestDialPropagatesTraceAndRecordsSpan(t *testing.T) {
 	}
 	if !client {
 		t.Fatal("sem span de cliente filho do span da saga")
+	}
+}
+
+func TestWarmUp(t *testing.T) {
+	opts := grpcclient.Options{
+		TracerProvider: sdktrace.NewTracerProvider(), MeterProvider: noop.NewMeterProvider(), Propagator: propagation.TraceContext{},
+	}
+	var lc net.ListenConfig
+	lis, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer()
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	up, err := grpcclient.Dial(lis.Addr().String(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = up.Close() })
+	if !grpcclient.WarmUp(t.Context(), up, 2*time.Second) {
+		t.Fatal("conexão com servidor no ar não ficou pronta")
+	}
+
+	// Ninguém escutando: devolve false no prazo, sem travar o boot.
+	closed, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := closed.Addr().String()
+	_ = closed.Close()
+	down, err := grpcclient.Dial(addr, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = down.Close() })
+	start := time.Now()
+	if grpcclient.WarmUp(t.Context(), down, 200*time.Millisecond) || time.Since(start) > time.Second {
+		t.Fatalf("dependência fora do ar: aquecimento deveria falhar em ~200 ms (levou %v)", time.Since(start))
 	}
 }

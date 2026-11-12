@@ -35,6 +35,12 @@ type world struct {
 
 func newWorld(t *testing.T, script ...attempt) *world {
 	t.Helper()
+	return newWorldWith(t, time.Hour, script...)
+}
+
+// newWorldWith permite escolher o prazo máximo de confirmação.
+func newWorldWith(t *testing.T, deadline time.Duration, script ...attempt) *world {
+	t.Helper()
 	_, pool := pgtest.Migrated(t)
 	cal, err := pix.NewCalendar()
 	if err != nil {
@@ -50,16 +56,24 @@ func newWorld(t *testing.T, script ...attempt) *world {
 	w.source = w.ledger.open("52998224725", sourceBalance)
 	w.dest = w.ledger.open(destCPF, 0)
 	w.svc = pix.NewService(w.store, cal, []byte("segredo-de-teste-com-32-bytes-ok"), limit)
-	w.runner = saga.NewRunner(saga.Config{
+	w.runner = w.newRunner(deadline)
+	return w
+}
+
+// newRunner monta um runner sobre o mesmo banco e as mesmas dependências: uma segunda
+// instância, ou o processo depois de um reinício.
+func (w *world) newRunner(deadline time.Duration) *saga.Runner {
+	return saga.NewRunner(saga.Config{
 		Owner: "teste", LeaseTTL: 30 * time.Second, Workers: 1, PollInterval: time.Hour, RetryDelay: 0,
 		DailyLimitCents: limit, FanOutTimeout: 2 * time.Second, SettleAttempts: 3,
-		SettleBackoff: resilience.Policy{Base: time.Millisecond, Max: 2 * time.Millisecond},
-		ConfirmAfter:  time.Hour,
+		SettleBackoff:   resilience.Policy{Base: time.Millisecond, Max: 2 * time.Millisecond},
+		ConfirmAfter:    0,
+		ConfirmInterval: resilience.Policy{Base: time.Millisecond, Max: 2 * time.Millisecond},
+		ConfirmDeadline: deadline, ConfirmWorkers: 1,
 	}, saga.Deps{
 		Store: w.store, Antifraud: w.antifraud, Ledger: w.ledger, SPI: w.spi, Tracing: noTracing{}, Observer: w.rec,
 		Logger: slog.New(slog.DiscardHandler),
 	})
-	return w
 }
 
 func (w *world) pix(t *testing.T, key string, cents int64, destKey string) pix.Transfer {

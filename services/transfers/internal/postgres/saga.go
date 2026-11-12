@@ -40,6 +40,7 @@ func (s *Store) Claim(ctx context.Context, owner string, ttl time.Duration, stat
 			DebitEntryID: r.DebitEntryID, LimitDay: r.LimitDay, LimitReserved: r.LimitReserved,
 			SettlementMaybeSent: r.SettlementMaybeSent, ConfirmationOverdue: r.ConfirmationOverdue,
 			TraceCarrier: r.TraceCarrier, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+			PendingSince: r.PendingSince, ConfirmationAttempts: r.ConfirmationAttempts,
 		})
 		if err != nil {
 			return nil, err
@@ -75,4 +76,25 @@ func leaseResult(n int64, err error, what string) error {
 		return pix.ErrLeaseLost
 	}
 	return nil
+}
+
+// RecordPoll registra uma consulta de status sem resposta definitiva (ADR-0007, seção 5): conta
+// a tentativa, marca o prazo estourado, agenda a próxima e solta o lease.
+func (s *Store) RecordPoll(ctx context.Context, lease pix.Lease, nextRunAt time.Time, overdue bool, at time.Time) error {
+	n, err := s.q.RecordConfirmationPoll(ctx, sqlcgen.RecordConfirmationPollParams{
+		Overdue: overdue, NextRunAt: nextRunAt, UpdatedAt: at, ID: lease.TransferID, LeaseToken: lease.Token,
+	})
+	return leaseResult(n, err, "registrando consulta de status")
+}
+
+// PendingStats resume os Pix pendentes de confirmação, para as métricas.
+func (s *Store) PendingStats(ctx context.Context) (saga.PendingStats, error) {
+	row, err := s.q.PendingStats(ctx)
+	if err != nil {
+		return saga.PendingStats{}, fmt.Errorf("postgres: resumindo pendentes: %w", err)
+	}
+	return saga.PendingStats{
+		Pending: row.Pending, Overdue: row.Overdue,
+		OldestAge: time.Duration(row.OldestAgeSeconds * float64(time.Second)),
+	}, nil
 }

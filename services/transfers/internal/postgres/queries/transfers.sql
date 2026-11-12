@@ -23,7 +23,8 @@ VALUES (@transfer_id, sqlc.narg(from_state), @to_state, sqlc.narg(reason), @at);
 -- name: GetTransfer :one
 SELECT id, source_account_id, destination_key_type, destination_key, destination_account_id, amount_cents,
        description, state, reason, settlement_id, debit_entry_id, limit_day, limit_reserved,
-       settlement_maybe_sent, confirmation_overdue, trace_carrier, created_at, updated_at
+       settlement_maybe_sent, confirmation_overdue, trace_carrier, created_at, updated_at,
+       pending_since, confirmation_attempts
 FROM transfers
 WHERE id = @id;
 
@@ -83,6 +84,7 @@ SET state = @to_state,
     reason = sqlc.narg(reason),
     destination_account_id = coalesce(sqlc.narg(destination_account_id), destination_account_id),
     debit_entry_id = coalesce(sqlc.narg(debit_entry_id), debit_entry_id),
+    pending_since = coalesce(sqlc.narg(pending_since), pending_since),
     next_run_at = @next_run_at,
     updated_at = @updated_at
 WHERE id = @id AND state = @from_state AND lease_token = @lease_token;
@@ -107,7 +109,7 @@ WHERE t.id = due.id
 RETURNING t.id, t.source_account_id, t.destination_key_type, t.destination_key, t.destination_account_id,
           t.amount_cents, t.description, t.state, t.reason, t.settlement_id, t.debit_entry_id, t.limit_day,
           t.limit_reserved, t.settlement_maybe_sent, t.confirmation_overdue, t.trace_carrier, t.created_at,
-          t.updated_at, t.lease_token;
+          t.updated_at, t.pending_since, t.confirmation_attempts, t.lease_token;
 
 -- name: RenewLease :execrows
 UPDATE transfers SET lease_until = now() + @ttl::interval
@@ -121,3 +123,19 @@ WHERE id = @id AND lease_token = @lease_token;
 -- name: MarkMaybeSent :execrows
 UPDATE transfers SET settlement_maybe_sent = true, updated_at = @updated_at
 WHERE id = @id AND lease_token = @lease_token;
+
+-- name: RecordConfirmationPoll :execrows
+-- Consulta de status sem resposta definitiva: conta a tentativa, marca o prazo estourado (só vai
+-- de falso para verdadeiro), agenda a próxima e solta o lease.
+UPDATE transfers
+SET confirmation_attempts = confirmation_attempts + 1,
+    confirmation_overdue = confirmation_overdue OR @overdue,
+    next_run_at = @next_run_at, lease_owner = NULL, lease_until = NULL, updated_at = @updated_at
+WHERE id = @id AND lease_token = @lease_token AND state = 'pending_confirmation';
+
+-- name: PendingStats :one
+SELECT count(*)::bigint AS pending,
+       count(*) FILTER (WHERE confirmation_overdue)::bigint AS overdue,
+       coalesce(extract(epoch FROM now() - min(pending_since)), 0)::float8 AS oldest_age_seconds
+FROM transfers
+WHERE state = 'pending_confirmation';

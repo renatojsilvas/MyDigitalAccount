@@ -36,6 +36,8 @@ type Config struct {
 type Dependencies struct {
 	AntifraudeAddr, LedgerAddr, SPIAddr string
 	AntifraudeTimeout, LedgerTimeout    time.Duration
+	// WarmUpTimeout limita o aquecimento das conexões no boot (nunca falha o boot).
+	WarmUpTimeout time.Duration
 }
 
 // Saga são os parâmetros do runner e do timeout na liquidação (ADR-0007, seções 4 e 5).
@@ -47,6 +49,9 @@ type Saga struct {
 	SettleAttempts                      int
 	SettleBackoffBase, SettleBackoffMax time.Duration
 	ConfirmAfter                        time.Duration
+	ConfirmIntervalMax                  time.Duration
+	ConfirmDeadline                     time.Duration
+	ConfirmWorkers                      int
 }
 
 // Database é o que o job de migration precisa: o banco e o nível de log.
@@ -165,18 +170,25 @@ func Load(lookup Lookup) (Config, error) {
 		SPIAddr:           r.get("TRANSFERS_SPI_ADDR", "spi-fake:50071"),
 		AntifraudeTimeout: r.duration("TRANSFERS_ANTIFRAUDE_TIMEOUT", "300ms"),
 		LedgerTimeout:     r.duration("TRANSFERS_LEDGER_TIMEOUT", "500ms"),
+		WarmUpTimeout:     r.duration("TRANSFERS_WARMUP_TIMEOUT", "5s"),
 	}
 	cfg.Saga = Saga{
-		Workers:           r.count("TRANSFERS_RUNNER_WORKERS", 8, 1, 256),
-		PollInterval:      r.duration("TRANSFERS_RUNNER_POLL_INTERVAL", "500ms"),
-		LeaseTTL:          r.duration("TRANSFERS_LEASE_TTL", "30s"),
-		RetryDelay:        r.duration("TRANSFERS_RETRY_DELAY", "2s"),
-		FanOutTimeout:     r.duration("TRANSFERS_FANOUT_TIMEOUT", "1s"),
-		SettleTimeout:     r.duration("TRANSFERS_SPI_SETTLE_TIMEOUT", "1s"),
-		SettleAttempts:    r.count("TRANSFERS_SPI_SETTLE_ATTEMPTS", 3, 1, 10),
-		SettleBackoffBase: r.duration("TRANSFERS_SPI_SETTLE_BACKOFF_BASE", "200ms"),
-		SettleBackoffMax:  r.duration("TRANSFERS_SPI_SETTLE_BACKOFF_MAX", "1s"),
-		ConfirmAfter:      r.duration("TRANSFERS_CONFIRM_INTERVAL_BASE", "2s"),
+		Workers:            r.count("TRANSFERS_RUNNER_WORKERS", 8, 1, 256),
+		PollInterval:       r.duration("TRANSFERS_RUNNER_POLL_INTERVAL", "500ms"),
+		LeaseTTL:           r.duration("TRANSFERS_LEASE_TTL", "30s"),
+		RetryDelay:         r.duration("TRANSFERS_RETRY_DELAY", "2s"),
+		FanOutTimeout:      r.duration("TRANSFERS_FANOUT_TIMEOUT", "1s"),
+		SettleTimeout:      r.duration("TRANSFERS_SPI_SETTLE_TIMEOUT", "1s"),
+		SettleAttempts:     r.count("TRANSFERS_SPI_SETTLE_ATTEMPTS", 3, 1, 10),
+		SettleBackoffBase:  r.duration("TRANSFERS_SPI_SETTLE_BACKOFF_BASE", "200ms"),
+		SettleBackoffMax:   r.duration("TRANSFERS_SPI_SETTLE_BACKOFF_MAX", "1s"),
+		ConfirmAfter:       r.duration("TRANSFERS_CONFIRM_INTERVAL_BASE", "2s"),
+		ConfirmIntervalMax: r.duration("TRANSFERS_CONFIRM_INTERVAL_MAX", "30s"),
+		ConfirmDeadline:    r.duration("TRANSFERS_CONFIRM_DEADLINE", "10m"),
+		ConfirmWorkers:     r.count("TRANSFERS_CONFIRM_WORKERS", 2, 1, 64),
+	}
+	if cfg.Saga.ConfirmIntervalMax < cfg.Saga.ConfirmAfter {
+		r.fail("TRANSFERS_CONFIRM_INTERVAL_MAX deve ser pelo menos TRANSFERS_CONFIRM_INTERVAL_BASE")
 	}
 	// O lease precisa cobrir a etapa mais longa (as tentativas de liquidação), senão outro
 	// runner a tomaria no meio: o fencing token barraria a escrita, mas o trabalho se repetiria.

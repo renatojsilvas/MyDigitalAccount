@@ -26,6 +26,13 @@ func dayFromDB(d pgtype.Date) pix.Day {
 	return pix.Day{Year: y, Month: m, D: dd}
 }
 
+func timeFromDB(t pgtype.Timestamptz) time.Time {
+	if !t.Valid {
+		return time.Time{}
+	}
+	return t.Time.UTC()
+}
+
 func uuidToDB(id uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: id != uuid.UUID{}}
 }
@@ -65,6 +72,7 @@ func transferFromDB(r sqlcgen.GetTransferRow) (pix.Transfer, error) {
 		State: state, Reason: reason, SettlementID: r.SettlementID, DebitEntryID: uuidFromDB(r.DebitEntryID),
 		LimitDay: dayFromDB(r.LimitDay), LimitReserved: r.LimitReserved, SettlementMaybeSent: r.SettlementMaybeSent,
 		ConfirmationOverdue: r.ConfirmationOverdue, Trace: trace,
+		PendingSince: timeFromDB(r.PendingSince), ConfirmationAttempts: int(r.ConfirmationAttempts),
 		CreatedAt: r.CreatedAt.UTC(), UpdatedAt: r.UpdatedAt.UTC(),
 	}, nil
 }

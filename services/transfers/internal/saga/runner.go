@@ -33,6 +33,14 @@ type Config struct {
 	SettleBackoff  resilience.Policy
 	// ConfirmAfter é a espera até a primeira consulta de status de um Pix pendente.
 	ConfirmAfter time.Duration
+	// ConfirmInterval: o intervalo entre consultas dobra a partir de Base até Max (equal jitter).
+	ConfirmInterval resilience.Policy
+	// ConfirmDeadline é o prazo máximo: passado, o Pix continua pendente, marcado overdue, e
+	// espera a conciliação (Fase 5). Nunca estornar nem concluir sem confirmação.
+	ConfirmDeadline time.Duration
+	// ConfirmWorkers é o pool do worker de confirmação, separado do da saga: pendentes demorados
+	// nunca atrasam Pix novos.
+	ConfirmWorkers int
 }
 
 // runnable são os estados que o runner leva adiante. PENDING_CONFIRMATION é do worker de
@@ -40,6 +48,9 @@ type Config struct {
 var runnable = []pix.State{
 	pix.StateAccepted, pix.StateValidated, pix.StateDebited, pix.StateSettling, pix.StateSettled, pix.StateReversing,
 }
+
+// pending são os estados do worker de confirmação.
+var pending = []pix.State{pix.StatePendingConfirmation}
 
 // Runner leva as transferências pela saga.
 type Runner struct {
@@ -88,19 +99,30 @@ func (r *Runner) Notify(uuid.UUID) {
 	}
 }
 
-// Run pega e processa transferências até ctx ser cancelado. No desligamento, para de pegar
-// trabalho e espera as que estão em andamento terminarem a etapa corrente (cada uma limitada
-// pelo lease). Uma queda no meio não perde nada: o lease expira e outra instância retoma do
-// estado gravado.
+// Run é o runner da saga: pega e processa transferências até ctx ser cancelado. No
+// desligamento, para de pegar trabalho e espera as que estão em andamento terminarem a etapa
+// corrente (cada uma limitada pelo lease). Uma queda no meio não perde nada: o lease expira e
+// outra instância retoma do estado gravado.
 func (r *Runner) Run(ctx context.Context) error {
-	sem := make(chan struct{}, r.cfg.Workers)
+	return r.loop(ctx, runnable, r.cfg.Workers, r.wake)
+}
+
+// RunConfirmations é o worker de confirmação (ADR-0007, seção 5): mesmo mecanismo de fila e
+// lease, sobre os Pix pendentes, num loop e num pool próprios. Lê os pendentes do banco, então
+// sobrevive a um reinício do processo.
+func (r *Runner) RunConfirmations(ctx context.Context) error {
+	return r.loop(ctx, pending, r.cfg.ConfirmWorkers, nil)
+}
+
+func (r *Runner) loop(ctx context.Context, states []pix.State, workers int, wake <-chan struct{}) error {
+	sem := make(chan struct{}, max(workers, 1))
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	ticker := time.NewTicker(r.cfg.PollInterval)
 	defer ticker.Stop()
 	for {
 		if free := cap(sem) - len(sem); free > 0 {
-			jobs, err := r.store.Claim(ctx, r.cfg.Owner, r.cfg.LeaseTTL, runnable, free)
+			jobs, err := r.store.Claim(ctx, r.cfg.Owner, r.cfg.LeaseTTL, states, free)
 			if err != nil && ctx.Err() == nil {
 				r.logger.ErrorContext(ctx, "saga: tomando trabalho", "error", err.Error())
 			}
@@ -116,7 +138,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-		case <-r.wake:
+		case <-wake:
 		}
 	}
 }
@@ -124,7 +146,16 @@ func (r *Runner) Run(ctx context.Context) error {
 // RunOnce pega e processa, em sequência, tudo o que estiver vencido. Para testes e para
 // rodar a saga sob controle.
 func (r *Runner) RunOnce(ctx context.Context) (int, error) {
-	jobs, err := r.store.Claim(ctx, r.cfg.Owner, r.cfg.LeaseTTL, runnable, 100)
+	return r.once(ctx, runnable)
+}
+
+// ConfirmOnce faz uma rodada do worker de confirmação, em sequência. Para testes.
+func (r *Runner) ConfirmOnce(ctx context.Context) (int, error) {
+	return r.once(ctx, pending)
+}
+
+func (r *Runner) once(ctx context.Context, states []pix.State) (int, error) {
+	jobs, err := r.store.Claim(ctx, r.cfg.Owner, r.cfg.LeaseTTL, states, 100)
 	for _, j := range jobs {
 		r.process(ctx, j)
 	}
@@ -133,9 +164,10 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 
 // outcome é o que a etapa decidiu.
 type outcome struct {
-	kind   outcomeKind
-	waitAt time.Time // para kindWait
-	err    error     // para o span e o log
+	kind    outcomeKind
+	waitAt  time.Time // para kindWait e kindPoll
+	overdue bool      // para kindPoll
+	err     error     // para o span e o log
 }
 
 type outcomeKind int
@@ -144,13 +176,14 @@ const (
 	kindAdvanced outcomeKind = iota // transitou: segue para a próxima etapa
 	kindWait                        // sem resposta definitiva: solta o lease e volta em waitAt
 	kindStop                        // lease perdido ou estado parado (terminal, pendente)
+	kindPoll                        // consulta de status sem resposta definitiva: próxima em waitAt
 )
 
 func (r *Runner) process(ctx context.Context, j Job) {
 	ctx, cancel := context.WithTimeout(ctx, r.cfg.LeaseTTL)
 	defer cancel()
 	t, lease := j.Transfer, j.Lease
-	for !t.State.Terminal() && t.State != pix.StatePendingConfirmation {
+	for !t.State.Terminal() {
 		if err := r.store.Renew(ctx, lease, r.cfg.LeaseTTL); err != nil {
 			r.leaseProblem(ctx, t, err)
 			return
@@ -172,6 +205,11 @@ func (r *Runner) process(ctx context.Context, j Job) {
 				r.leaseProblem(ctx, t, err)
 			}
 			return
+		case kindPoll:
+			if err := r.store.RecordPoll(ctx, lease, out.waitAt, out.overdue, r.instant()); err != nil {
+				r.leaseProblem(ctx, t, err)
+			}
+			return
 		case kindStop:
 			return
 		}
@@ -182,7 +220,7 @@ func resultOf(o outcome) string {
 	switch o.kind {
 	case kindAdvanced:
 		return "advanced"
-	case kindWait:
+	case kindWait, kindPoll:
 		return "retry_later"
 	default:
 		return "stopped"

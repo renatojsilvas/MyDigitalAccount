@@ -34,6 +34,17 @@ func (p Policy) Backoff(attempt int, roll func() float64) time.Duration {
 	return time.Duration(roll() * float64(ceiling))
 }
 
+// EqualJitter devolve a espera com "equal jitter": metade do teto fixa, metade sorteada. Usado
+// nas consultas de status: com full jitter a espera poderia sortear perto de zero e martelar o
+// SPI justamente quando ele está degradado.
+func (p Policy) EqualJitter(attempt int, roll func() float64) time.Duration {
+	ceiling := p.Base << min(attempt, 30)
+	if ceiling <= 0 || ceiling > p.Max {
+		ceiling = p.Max
+	}
+	return ceiling/2 + time.Duration(roll()*float64(ceiling/2))
+}
+
 // Retry executa fn até dar certo, até o erro não ser repetível ou até acabarem as tentativas.
 // onRetry é chamado antes de cada nova tentativa (métricas). Devolve o último erro.
 func Retry(ctx context.Context, p Policy, retryable func(error) bool, onRetry func(err error), fn func(ctx context.Context) error) error {

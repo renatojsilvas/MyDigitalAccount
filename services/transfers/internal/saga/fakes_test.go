@@ -139,6 +139,39 @@ type fakeSPI struct {
 	script []attempt
 	calls  int
 	sent   int // chamadas que de fato saíram (depois do beforeSend)
+	// status é o roteiro das consultas de status (o último se repete).
+	status  []queryResult
+	queries int
+}
+
+// queryResult é a resposta de uma consulta de status.
+type queryResult int
+
+const (
+	querySettled queryResult = iota
+	queryRejected
+	queryNotFound
+	queryFailed
+)
+
+func (s *fakeSPI) Status(context.Context, uuid.UUID) (saga.SettleStatus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.status) == 0 {
+		return 0, saga.ErrSettlementNotFound
+	}
+	q := s.status[min(s.queries, len(s.status)-1)]
+	s.queries++
+	switch q {
+	case querySettled:
+		return saga.Settled, nil
+	case queryRejected:
+		return saga.Rejected, nil
+	case queryNotFound:
+		return 0, saga.ErrSettlementNotFound
+	default:
+		return 0, status.Error(codes.Unavailable, "SPI indisponível (simulado)")
+	}
 }
 
 func (s *fakeSPI) Settle(_ context.Context, _ saga.SettleRequest, beforeSend func() error) (saga.SettleStatus, error) {
@@ -174,11 +207,25 @@ type recorder struct {
 	transitions   []string
 	compensations map[string]int
 	settle        map[string]int
+	queries       map[string]int
+	overdue       int
 	leaseLost     int
 }
 
 func newRecorder() *recorder {
-	return &recorder{compensations: map[string]int{}, settle: map[string]int{}}
+	return &recorder{compensations: map[string]int{}, settle: map[string]int{}, queries: map[string]int{}}
+}
+
+func (r *recorder) StatusQueried(_ context.Context, result string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.queries[result]++
+}
+
+func (r *recorder) ConfirmationOverdue(context.Context) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.overdue++
 }
 
 func (r *recorder) Transitioned(_ context.Context, from, to pix.State, _ pix.Reason) {

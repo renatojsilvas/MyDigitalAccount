@@ -4,13 +4,16 @@
 package grpcclient
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -37,4 +40,23 @@ func Dial(target string, o Options, extra ...grpc.DialOption) (*grpc.ClientConn,
 		return nil, fmt.Errorf("grpcclient: %s: %w", target, err)
 	}
 	return conn, nil
+}
+
+// WarmUp abre a conexão e espera ela ficar pronta, até timeout, para que a primeira chamada de
+// verdade não pague a partida a frio (resolução de nome, TCP e o handshake do HTTP/2). Nunca
+// falha o boot: devolve false se a conexão não ficou pronta no prazo, e quem chama só registra
+// o aviso (a dependência pode subir depois; o gRPC reconecta sozinho).
+func WarmUp(ctx context.Context, conn *grpc.ClientConn, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn.Connect()
+	for {
+		s := conn.GetState()
+		if s == connectivity.Ready {
+			return true
+		}
+		if !conn.WaitForStateChange(ctx, s) {
+			return false
+		}
+	}
 }

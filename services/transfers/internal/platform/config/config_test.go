@@ -58,7 +58,8 @@ func TestSagaDefaultsFollowADR0007(t *testing.T) {
 	s, d := cfg.Saga, cfg.Dependencies
 	if s.SettleAttempts != 3 || s.SettleTimeout.String() != "1s" || s.SettleBackoffBase.String() != "200ms" ||
 		s.SettleBackoffMax.String() != "1s" || s.ConfirmAfter.String() != "2s" || s.LeaseTTL.String() != "30s" ||
-		d.AntifraudeTimeout.String() != "300ms" || d.LedgerTimeout.String() != "500ms" || s.FanOutTimeout.String() != "1s" {
+		d.AntifraudeTimeout.String() != "300ms" || d.LedgerTimeout.String() != "500ms" || s.FanOutTimeout.String() != "1s" ||
+		s.ConfirmIntervalMax.String() != "30s" || s.ConfirmDeadline.String() != "10m0s" {
 		t.Fatalf("saga = %+v, dependências = %+v", s, d)
 	}
 }

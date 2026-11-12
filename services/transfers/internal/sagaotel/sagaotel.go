@@ -35,6 +35,7 @@ const (
 	keySettle       = attribute.Key("transfers.settle_result")
 	keyDependency   = attribute.Key("dependency")
 	keyPixID        = attribute.Key("transfers.pix_id")
+	keyQuery        = attribute.Key("transfers.status_query_result")
 )
 
 // Telemetry implementa saga.Tracing, saga.Observer e clients.Observer.
@@ -48,6 +49,8 @@ type Telemetry struct {
 	settle      metric.Int64Counter
 	leaseLost   metric.Int64Counter
 	retries     metric.Int64Counter
+	queries     metric.Int64Counter
+	overdue     metric.Int64Counter
 
 	mu       sync.Mutex
 	breakers map[string]resilience.State
@@ -95,6 +98,14 @@ func New(tp trace.TracerProvider, mp metric.MeterProvider, prop propagation.Text
 	}
 	if t.retries, err = m.Int64Counter("transfers.dependency.retries", metric.WithUnit("{retry}"),
 		metric.WithDescription("Novas tentativas de chamada, por dependência.")); err != nil {
+		return nil, err
+	}
+	if t.queries, err = m.Int64Counter("transfers.confirmation.status_queries", metric.WithUnit("{query}"),
+		metric.WithDescription("Consultas de status de Pix pendentes, por desfecho: settled, rejected, not_found, failed.")); err != nil {
+		return nil, err
+	}
+	if t.overdue, err = m.Int64Counter("transfers.confirmation.overdue", metric.WithUnit("{pix}"),
+		metric.WithDescription("Pix que passaram do prazo máximo de confirmação (continuam pendentes).")); err != nil {
 		return nil, err
 	}
 	state, err := m.Int64ObservableGauge("transfers.circuit_breaker.state",
@@ -152,6 +163,47 @@ func (t *Telemetry) Compensated(ctx context.Context, kind string) {
 // SettleAttempt conta uma tentativa de liquidação pelo desfecho.
 func (t *Telemetry) SettleAttempt(ctx context.Context, result string) {
 	t.settle.Add(ctx, 1, metric.WithAttributes(keySettle.String(result)))
+}
+
+// StatusQueried conta uma consulta de status pelo desfecho.
+func (t *Telemetry) StatusQueried(ctx context.Context, result string) {
+	t.queries.Add(ctx, 1, metric.WithAttributes(keyQuery.String(result)))
+}
+
+// ConfirmationOverdue conta um Pix que passou do prazo máximo de confirmação.
+func (t *Telemetry) ConfirmationOverdue(ctx context.Context) { t.overdue.Add(ctx, 1) }
+
+// RegisterPending expõe, a cada coleta, os Pix pendentes de confirmação, quantos passaram do
+// prazo e a idade do mais antigo (seção 4.5 do plano; base do alerta da Fase 6). Os números vêm
+// do banco: valem para todas as instâncias, não só para esta.
+func (t *Telemetry) RegisterPending(mp metric.MeterProvider, stats func(ctx context.Context) (saga.PendingStats, error)) error {
+	m := mp.Meter(scope)
+	pendingG, err := m.Int64ObservableGauge("transfers.confirmation.pending", metric.WithUnit("{pix}"),
+		metric.WithDescription("Pix em PENDING_CONFIRMATION agora."))
+	if err != nil {
+		return err
+	}
+	overdueG, err := m.Int64ObservableGauge("transfers.confirmation.pending_overdue", metric.WithUnit("{pix}"),
+		metric.WithDescription("Pix pendentes além do prazo máximo de confirmação, esperando a conciliação."))
+	if err != nil {
+		return err
+	}
+	oldestG, err := m.Float64ObservableGauge("transfers.confirmation.oldest_pending_age", metric.WithUnit("s"),
+		metric.WithDescription("Há quanto tempo o Pix pendente mais antigo espera confirmação."))
+	if err != nil {
+		return err
+	}
+	_, err = m.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		s, err := stats(ctx)
+		if err != nil {
+			return err
+		}
+		o.ObserveInt64(pendingG, s.Pending)
+		o.ObserveInt64(overdueG, s.Overdue)
+		o.ObserveFloat64(oldestG, s.OldestAge.Seconds())
+		return nil
+	}, pendingG, overdueG, oldestG)
+	return err
 }
 
 // LeaseLost conta um lease perdido.

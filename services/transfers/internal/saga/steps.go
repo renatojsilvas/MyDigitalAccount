@@ -29,6 +29,8 @@ func (r *Runner) step(ctx context.Context, t *pix.Transfer, lease pix.Lease) out
 		return r.credit(ctx, t, lease)
 	case pix.StateReversing:
 		return r.reverse(ctx, t, lease)
+	case pix.StatePendingConfirmation:
+		return r.confirm(ctx, t, lease)
 	default:
 		return outcome{kind: kindStop}
 	}
@@ -197,6 +199,43 @@ func (r *Runner) settle(ctx context.Context, t *pix.Transfer, lease pix.Lease) o
 		out.err = lastErr
 	}
 	return out
+}
+
+// confirm é uma rodada do worker de confirmação (ADR-0007, seção 5): consulta o status pelo
+// settlement_id. Só uma resposta definitiva muda o estado; "não encontrado" não prova que não
+// liquidou (o pedido pode estar em trânsito). Passado o prazo máximo, o Pix continua pendente,
+// marcado overdue: quem fecha é a conciliação (Fase 5), nunca um estorno por timeout.
+func (r *Runner) confirm(ctx context.Context, t *pix.Transfer, lease pix.Lease) outcome {
+	status, err := r.spi.Status(ctx, t.SettlementID)
+	switch {
+	case err == nil && status == Settled:
+		r.observer.StatusQueried(ctx, "settled")
+		return r.move(ctx, t, lease, pix.Transition{To: pix.StateSettled})
+	case err == nil && status == Rejected:
+		r.observer.StatusQueried(ctx, "rejected")
+		return r.move(ctx, t, lease, pix.Transition{To: pix.StateReversing, Reason: pix.ReasonSettlementRejected})
+	case errors.Is(err, ErrSettlementNotFound):
+		r.observer.StatusQueried(ctx, "not_found")
+	default:
+		r.observer.StatusQueried(ctx, "failed")
+	}
+
+	now := r.now()
+	overdue := !t.PendingSince.IsZero() && now.Sub(t.PendingSince) >= r.cfg.ConfirmDeadline
+	//nolint:gosec // jitter de espera, não segurança
+	interval := r.cfg.ConfirmInterval.EqualJitter(t.ConfirmationAttempts, rand.Float64)
+	if overdue {
+		interval = r.cfg.ConfirmInterval.Max
+		if !t.ConfirmationOverdue {
+			r.observer.ConfirmationOverdue(ctx)
+			r.logger.WarnContext(ctx, "saga: Pix pendente de confirmação além do prazo máximo; continua pendente e "+
+				"espera a conciliação", "pix_id", t.ID.String(), "pending_since", t.PendingSince)
+		}
+	}
+	if err == nil {
+		err = ErrSettlementNotFound
+	}
+	return outcome{kind: kindPoll, waitAt: now.Add(interval), overdue: overdue, err: err}
 }
 
 // credit é forward-only (depois do pivô): repete até o ledger responder; nunca compensa.
