@@ -5,6 +5,8 @@
 
 # Código gerado (ADR-0001): recriado por make generate
 /gen/
+# Tipos do front gerados do OpenAPI do BFF (make generate)
+/web/src/api/schema.d.ts
 # Código do sqlc (gerado das queries e das migrations de cada serviço)
 /services/*/internal/postgres/sqlcgen/
 

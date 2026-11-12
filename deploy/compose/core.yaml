@@ -172,6 +172,27 @@ services:
       ledger:
         condition: service_healthy
 
+  # Front-end de demonstração (seção 6.1 do plano): só imagem de desenvolvimento (Vite). O proxy
+  # /api -> BFF vive no servidor do Vite, então não há CORS. Sem imagem final: não é um serviço de produção.
+  web:
+    <<: *dev-service
+    profiles: ["core"]
+    image: conta-digital/web:dev
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      target: dev
+      additional_contexts:
+        tools: docker-image://conta-digital/tools:dev
+    working_dir: /workspace/web
+    environment:
+      BFF_PROXY_TARGET: http://bff:8088
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-5173}:5173"
+    depends_on:
+      bff:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   cache:

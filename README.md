@@ -45,6 +45,7 @@ parar e apagar o ambiente são comandos diretos do Compose, porque o `tools` nã
 | Criar as contas de demonstração (ledger no ar; idempotente) | `docker compose run --rm tools make seed` |
 | Gate de desempenho do ledger (k6) | `docker compose --profile core up -d --wait ledger` e `docker compose --profile load run --rm k6` |
 | Subir Postgres, ledger e BFF (recarga automática) | `docker compose --profile core up -d --build` |
+| Front-end de demonstração (sobe junto com o `core`) | http://127.0.0.1:5173, login com o CPF de uma conta do seed |
 | Subir a observabilidade | `docker compose --profile obs up -d --build` |
 | Ver o estado | `docker compose --profile core --profile obs ps` |
 | Parar (mantém os dados) | `docker compose --profile core --profile obs down` |

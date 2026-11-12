@@ -2,7 +2,7 @@
 #
 # Contexto de build: a RAIZ do repositório. Pré-requisito: `make generate` (gen/ts).
 # O estágio "tools" vem de um contexto adicional (a imagem tools, fonte única de versões):
-#   compose:  additional_contexts: tools: service:tools
+#   compose:  additional_contexts: tools: docker-image://conta-digital/tools:dev
 #   manual:   docker build --build-context tools=docker-image://conta-digital/tools:dev ...
 #
 # Alvos:  dev   -> ferramentas + tsx watch (recarga automática); o código entra por volume

@@ -66,7 +66,7 @@ A mesma estratégia vale para Postgres (fase 0 em diante), Redis (fase 3) e Kafk
 
 ### 5. Decisões do passo 6 (Dockerfiles e compose)
 
-- **O alvo `dev` reaproveita a imagem `tools`** (contexto adicional `tools: service:tools`), em vez de repetir Go, Node e `air` com outras versões. Assim `tools` continua a única fonte de versões; o alvo `final` também compila no estágio `tools`.
+- **O alvo `dev` reaproveita a imagem `tools`** (contexto adicional `tools: docker-image://conta-digital/tools:dev`; era `service:tools` até o CI mostrar que um profile inativo é, para o Compose, um serviço inexistente), em vez de repetir Go, Node e `air` com outras versões. Assim `tools` continua a única fonte de versões; o alvo `final` também compila no estágio `tools`.
 - **Alvo `final`**: ledger em `distroless/static-debian13:nonroot` (18 MB, sem shell, sem root); BFF em `node:24-bookworm-slim` com `USER node` e só dependências de produção (`pnpm deploy`). Bases fixadas por tag **e digest**.
 - **Healthcheck dentro do Dockerfile**, um por alvo: `curl` no `dev` e, no `final`, o subcomando `ledger healthcheck` (distroless não tem shell nem curl) e um `fetch` do Node. O compose herda. A sonda usa `/readyz`, que é o que `depends_on: service_healthy` precisa.
 - **Arquivos incluídos pelo compose são autocontidos**: o Compose carrega cada um isoladamente, então `tools`, Postgres, ledger e bff vivem juntos em `core.yaml`, e `obs`, `events` e `load` serão arquivos independentes.
