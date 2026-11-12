@@ -11,6 +11,8 @@ describe("loadConfig", () => {
       port: 8088,
       ledgerUrl: "http://ledger:50051",
       ledgerTimeoutMs: 1000,
+      ledgerBalanceTimeoutMs: 250,
+      ledgerStatementTimeoutMs: 200,
       otlpEndpoint: undefined,
       shutdownTimeoutMs: 10_000,
     });
@@ -23,6 +25,8 @@ describe("loadConfig", () => {
       BFF_PORT: "9000",
       LEDGER_GRPC_URL: "http://localhost:50051",
       LEDGER_TIMEOUT_MS: "250",
+      LEDGER_BALANCE_TIMEOUT_MS: "300",
+      LEDGER_STATEMENT_TIMEOUT_MS: "120",
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel:4317",
     });
     expect(cfg).toMatchObject({
@@ -31,6 +35,8 @@ describe("loadConfig", () => {
       port: 9000,
       ledgerUrl: "http://localhost:50051",
       ledgerTimeoutMs: 250,
+      ledgerBalanceTimeoutMs: 300,
+      ledgerStatementTimeoutMs: 120,
       otlpEndpoint: "http://otel:4317",
     });
   });
@@ -48,6 +54,8 @@ describe("loadConfig", () => {
     ["BFF_PORT", { BFF_PORT: "70000" }],
     ["LEDGER_GRPC_URL", { LEDGER_GRPC_URL: "não é url" }],
     ["LEDGER_TIMEOUT_MS", { LEDGER_TIMEOUT_MS: "0" }],
+    ["LEDGER_BALANCE_TIMEOUT_MS", { LEDGER_BALANCE_TIMEOUT_MS: "0" }],
+    ["LEDGER_STATEMENT_TIMEOUT_MS", { LEDGER_STATEMENT_TIMEOUT_MS: "-5" }],
     ["SHUTDOWN_TIMEOUT_MS", { SHUTDOWN_TIMEOUT_MS: "abc" }],
   ])("rejeita %s inválida", (name, env) => {
     expect(() => loadConfig(env)).toThrow(name);

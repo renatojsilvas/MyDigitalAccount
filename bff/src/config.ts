@@ -10,7 +10,11 @@ const envSchema = z.object({
   // Porta interna do contêiner; a porta publicada no host é BFF_HOST_PORT, só no compose.
   BFF_PORT: z.coerce.number().int().min(0).max(65535).default(8088),
   LEDGER_GRPC_URL: z.url().default("http://ledger:50051"),
+  // Prazo padrão das chamadas ao ledger (ping, busca de conta no login).
   LEDGER_TIMEOUT_MS: z.coerce.number().int().positive().default(1000),
+  // Prazos da home (ADR-0005): menores que o SLO de 300 ms; o extrato é cortado antes de propósito.
+  LEDGER_BALANCE_TIMEOUT_MS: z.coerce.number().int().positive().default(250),
+  LEDGER_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(200),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
@@ -23,6 +27,8 @@ export interface Config {
   readonly port: number;
   readonly ledgerUrl: string;
   readonly ledgerTimeoutMs: number;
+  readonly ledgerBalanceTimeoutMs: number;
+  readonly ledgerStatementTimeoutMs: number;
   /** Ausente: nada é exportado por OTLP; os logs seguem no stdout. */
   readonly otlpEndpoint: string | undefined;
   readonly shutdownTimeoutMs: number;
@@ -58,6 +64,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     port: e.BFF_PORT,
     ledgerUrl: e.LEDGER_GRPC_URL,
     ledgerTimeoutMs: e.LEDGER_TIMEOUT_MS,
+    ledgerBalanceTimeoutMs: e.LEDGER_BALANCE_TIMEOUT_MS,
+    ledgerStatementTimeoutMs: e.LEDGER_STATEMENT_TIMEOUT_MS,
     otlpEndpoint: e.OTEL_EXPORTER_OTLP_ENDPOINT,
     shutdownTimeoutMs: e.SHUTDOWN_TIMEOUT_MS,
   };

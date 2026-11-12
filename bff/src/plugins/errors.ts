@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import { hasZodFastifySchemaValidationErrors } from "fastify-type-provider-zod";
-import { problem, problemOf, type DependencyError, type ProblemResponse } from "../errors.js";
+import { problem, problemOf, type BffError, type ProblemResponse } from "../errors.js";
 
 function send(request: FastifyRequest, reply: FastifyReply, p: ProblemResponse): FastifyReply {
   const traceId = request.telemetry?.span.spanContext().traceId;
@@ -12,11 +12,11 @@ function send(request: FastifyRequest, reply: FastifyReply, p: ProblemResponse):
     .send(traceId === undefined ? p.body : { ...p.body, trace_id: traceId });
 }
 
-/** Traduz uma falha esperada de dependência para a resposta HTTP. Usado pelas rotas. */
+/** Traduz uma falha esperada (dependência ou identidade) para a resposta HTTP. Usado pelas rotas. */
 export function replyWithProblem(
   request: FastifyRequest,
   reply: FastifyReply,
-  error: DependencyError,
+  error: BffError,
 ): FastifyReply {
   return send(request, reply, problemOf(error));
 }

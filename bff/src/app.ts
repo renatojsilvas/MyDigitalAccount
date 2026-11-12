@@ -79,6 +79,8 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
       createGrpcTransport({ baseUrl: config.ledgerUrl, interceptors }));
   const ledger = createLedgerClient(makeTransport([ledgerTelemetry]), {
     timeoutMs: config.ledgerTimeoutMs,
+    balanceTimeoutMs: config.ledgerBalanceTimeoutMs,
+    statementTimeoutMs: config.ledgerStatementTimeoutMs,
   });
   const lifecycle = createLifecycle();
 

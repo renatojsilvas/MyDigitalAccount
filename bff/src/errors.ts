@@ -8,10 +8,19 @@ import type { Result } from "./result.js";
 export type DependencyError =
   | { readonly kind: "timeout"; readonly dependency: string }
   | { readonly kind: "unavailable"; readonly dependency: string }
+  | { readonly kind: "not_found"; readonly dependency: string }
   | { readonly kind: "invalid_argument"; readonly detail: string }
   | { readonly kind: "unexpected"; readonly dependency: string };
 
 export type DependencyResult<T> = Result<T, DependencyError>;
+
+/** Falha de identidade: o token (ou a conta a que ele aponta) não vale mais. Sempre 401. */
+export interface UnauthenticatedError {
+  readonly kind: "unauthenticated";
+}
+
+/** Tudo o que uma rota pode devolver como falha esperada; `problemOf` traduz num lugar só. */
+export type BffError = DependencyError | UnauthenticatedError;
 
 /** Corpo de erro no formato RFC 9457 (problem details), sem detalhes internos. */
 export interface Problem {
@@ -29,7 +38,7 @@ export interface ProblemResponse {
   readonly headers: Readonly<Record<string, string>>;
 }
 
-export function problemOf(error: DependencyError): ProblemResponse {
+export function problemOf(error: BffError): ProblemResponse {
   switch (error.kind) {
     case "timeout":
       return problem(504, "dependency_timeout", "A dependência não respondeu a tempo");
@@ -38,6 +47,10 @@ export function problemOf(error: DependencyError): ProblemResponse {
         ...problem(503, "dependency_unavailable", "A dependência está indisponível"),
         headers: { "retry-after": "1" },
       };
+    case "not_found":
+      return problem(404, "not_found", "Recurso não encontrado");
+    case "unauthenticated":
+      return problem(401, "unauthenticated", "Autenticação necessária");
     case "invalid_argument":
       return problem(400, "invalid_argument", "Requisição inválida", error.detail);
     case "unexpected":
