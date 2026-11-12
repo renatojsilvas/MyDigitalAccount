@@ -11,17 +11,26 @@ import type { DestinationStream } from "pino";
 import { createLedgerClient } from "./clients/ledger.js";
 import type { Config } from "./config.js";
 import { createLifecycle, type Lifecycle } from "./lifecycle.js";
+import { authRoutes } from "./modules/auth/route.js";
+import { createAuthService } from "./modules/auth/service.js";
+import { homeRoutes } from "./modules/home/route.js";
+import { createHomeObserver } from "./modules/home/observe.js";
+import { createHomeService } from "./modules/home/service.js";
 import { pingRoutes } from "./modules/ping/route.js";
 import { createPingService } from "./modules/ping/service.js";
 import { createClientTelemetryInterceptor } from "./platform/connect-telemetry.js";
 import { createLogger } from "./platform/logger.js";
 import { registerRuntimeMetrics } from "./platform/runtime-metrics.js";
 import { createTelemetry, type Telemetry, type TelemetryOverrides } from "./platform/telemetry.js";
+import { authPlugin } from "./plugins/auth.js";
 import { errorsPlugin } from "./plugins/errors.js";
 import { healthPlugin } from "./plugins/health.js";
 import { telemetryPlugin } from "./plugins/telemetry.js";
 
 export const SERVICE_NAME = "bff";
+/** Emissor e destinatário do JWT: o próprio BFF. */
+export const JWT_ISSUER = "conta-bff";
+export const JWT_AUDIENCE = "conta-web";
 
 /** Pontos de troca usados pelos testes; em produção tudo vem do padrão. */
 export interface AppOverrides {
@@ -100,10 +109,26 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
     ignorePaths: new Set(["/healthz", "/readyz"]),
   });
   void app.register(errorsPlugin);
+  void app.register(authPlugin, {
+    secret: config.jwtSecret,
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+    ttlSeconds: config.jwtTtlSeconds,
+  });
   void app.register(healthPlugin, { lifecycle });
   void app.withTypeProvider<ZodTypeProvider>().register(pingRoutes, {
     service: createPingService({ ledger }),
   });
+
+  void app.withTypeProvider<ZodTypeProvider>().register(homeRoutes, {
+    service: createHomeService({ ledger, observer: createHomeObserver(meter) }),
+  });
+  if (config.demoLogin) {
+    void app.withTypeProvider<ZodTypeProvider>().register(authRoutes, {
+      service: createAuthService({ ledger }),
+      ttlSeconds: config.jwtTtlSeconds,
+    });
+  }
 
   app.addHook("onClose", async () => {
     stopRuntimeMetrics();

@@ -3,6 +3,7 @@ import {
   SpanKind,
   SpanStatusCode,
   defaultTextMapGetter,
+  isSpanContextValid,
   trace,
   type Context,
   type Meter,
@@ -36,7 +37,7 @@ export interface TelemetryPluginOptions {
 }
 
 /**
- * Observabilidade do servidor HTTP: span de servidor (com extração do `traceparent`),
+ * Observabilidade do servidor HTTP: span de servidor raiz (o `traceparent` de entrada vira só um link),
  * métricas RED (taxa, erros e duração por rota), logger da requisição com trace_id e
  * span_id, e um único log estruturado por requisição concluída.
  *
@@ -55,7 +56,7 @@ export const telemetryPlugin = fp<TelemetryPluginOptions>(
 
     app.decorateRequest("telemetry", null);
 
-    app.addHook("onRequest", (request, _reply, done) => {
+    app.addHook("onRequest", (request, reply, done) => {
       const path = request.url.split("?")[0] ?? request.url;
       if (opts.ignorePaths.has(path)) {
         done();
@@ -63,25 +64,36 @@ export const telemetryPlugin = fp<TelemetryPluginOptions>(
       }
       // Rota não encontrada vira "unmatched": nunca o caminho cru, que teria cardinalidade ilimitada.
       const route = request.routeOptions.url ?? "unmatched";
-      const parent = opts.propagator.extract(ROOT_CONTEXT, request.headers, defaultTextMapGetter);
+      // O BFF é a borda pública: o `traceparent` de entrada NÃO é confiável (o cliente poderia
+      // escolher o trace_id e a amostragem). O trace começa aqui, como raiz; o contexto recebido
+      // fica só como span link, para correlação (ADR-0006).
+      const incoming = trace.getSpanContext(
+        opts.propagator.extract(ROOT_CONTEXT, request.headers, defaultTextMapGetter),
+      );
+      const links =
+        incoming !== undefined && isSpanContextValid(incoming) ? [{ context: incoming }] : [];
       const span = opts.tracer.startSpan(
         `${request.method} ${route}`,
         {
+          root: true,
           kind: SpanKind.SERVER,
+          links,
           attributes: {
             "http.request.method": request.method,
             "http.route": route,
             "url.path": path,
           },
         },
-        parent,
+        ROOT_CONTEXT,
       );
       request.telemetry = {
         span,
-        context: trace.setSpan(parent, span),
+        context: trace.setSpan(ROOT_CONTEXT, span),
         startedAt: performance.now(),
       };
       const { traceId, spanId } = span.spanContext();
+      // Permite achar o trace de uma requisição sem o cliente ter que enviar um traceparent.
+      void reply.header("x-trace-id", traceId);
       request.log = request.log.child({ trace_id: traceId, span_id: spanId });
       done();
     });

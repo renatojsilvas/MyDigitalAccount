@@ -141,15 +141,22 @@ describe("traces", () => {
     );
   });
 
-  it("continua o trace de quem chamou o BFF (traceparent de entrada)", async () => {
+  it("não continua o trace de quem chamou: abre um trace novo e guarda o contexto como link", async () => {
     h = createHarness();
-    const traceId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const parentId = "bbbbbbbbbbbbbbbb";
-    await h.app.inject({ url: "/ping", headers: { traceparent: `00-${traceId}-${parentId}-01` } });
+    const forgedTrace = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const forgedSpan = "bbbbbbbbbbbbbbbb";
+    const res = await h.app.inject({
+      url: "/ping",
+      headers: { traceparent: `00-${forgedTrace}-${forgedSpan}-01` },
+    });
 
     const server = h.spanNamed("GET /ping");
-    expect(server.spanContext().traceId).toBe(traceId);
-    expect(server.parentSpanContext?.spanId).toBe(parentId);
+    expect(server.spanContext().traceId).not.toBe(forgedTrace);
+    expect(server.parentSpanContext).toBeUndefined(); // raiz
+    expect(server.links).toHaveLength(1);
+    expect(server.links[0]?.context).toMatchObject({ traceId: forgedTrace, spanId: forgedSpan });
+    // O cliente acha o trace pelo header, sem precisar enviar um traceparent.
+    expect(res.headers["x-trace-id"]).toBe(server.spanContext().traceId);
   });
 
   it("marca o span de cliente com erro e o status gRPC quando o ledger falha", async () => {

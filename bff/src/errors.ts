@@ -50,7 +50,10 @@ export function problemOf(error: BffError): ProblemResponse {
     case "not_found":
       return problem(404, "not_found", "Recurso não encontrado");
     case "unauthenticated":
-      return problem(401, "unauthenticated", "Autenticação necessária");
+      return {
+        ...problem(401, "unauthenticated", "Autenticação necessária"),
+        headers: { "www-authenticate": "Bearer" },
+      };
     case "invalid_argument":
       return problem(400, "invalid_argument", "Requisição inválida", error.detail);
     case "unexpected":

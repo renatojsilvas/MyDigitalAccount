@@ -2,9 +2,10 @@
 # Critério de pronto da Fase 0: um /ping do BFF ao ledger vira UM trace só, e os logs dos
 # dois serviços carregam o mesmo trace_id (o salto do log ao trace).
 #
-# O script manda ao BFF um traceparent com um trace_id conhecido (o BFF continua o trace de
-# quem o chama), então sabemos exatamente qual trace procurar. Pré-requisitos: profiles core
-# e obs no ar, com OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 nos serviços:
+# O BFF é a borda pública e NÃO confia no `traceparent` de entrada (ADR-0006): ele abre um trace
+# novo e guarda o contexto recebido como span link. Por isso o script acha o trace pelo header
+# `x-trace-id` da resposta, e confere que o trace_id forjado que ele enviou não foi continuado.
+# Pré-requisitos: profiles core e obs no ar, com OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317:
 #
 #   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
 #     docker compose --profile core --profile obs up -d --build
@@ -16,8 +17,8 @@ TEMPO="${TEMPO_URL:-http://tempo:3200}"
 LOKI="${LOKI_URL:-http://loki:3100}"
 
 hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
-trace_id="$(hex 16)"
-caller_span="$(hex 8)"
+forged_trace_id="$(hex 16)"
+forged_span="$(hex 8)"
 
 # Espera o BFF estar pronto (até 60 s): logo após `up`, ele ainda pode estar subindo.
 i=0
@@ -27,25 +28,29 @@ until curl -fsS -o /dev/null "${BFF}/readyz" 2>/dev/null; do
   sleep 1
 done
 
-status="$(curl -s -o /dev/null -w '%{http_code}' -H "traceparent: 00-${trace_id}-${caller_span}-01" "${BFF}/ping?message=e2e" || true)"
+response_headers="$(curl -s -D - -o /dev/null -H "traceparent: 00-${forged_trace_id}-${forged_span}-01" "${BFF}/ping?message=e2e" || true)"
+status="$(printf '%s\n' "${response_headers}" | head -n1 | awk '{print $2}')"
 [ "${status}" = "200" ] || { echo "FALHOU: GET /ping devolveu '${status}' (esperado 200); o ledger está saudável?"; exit 1; }
-echo "GET /ping ok; trace_id=${trace_id}"
+trace_id="$(printf '%s\n' "${response_headers}" | tr -d '\r' | awk 'tolower($1) == "x-trace-id:" {print $2}')"
+[ -n "${trace_id}" ] || { echo "FALHOU: a resposta não trouxe o header x-trace-id"; exit 1; }
+[ "${trace_id}" != "${forged_trace_id}" ] || { echo "FALHOU: o BFF adotou o trace_id enviado pelo cliente"; exit 1; }
+echo "GET /ping ok; trace_id=${trace_id} (o enviado, ${forged_trace_id}, não foi adotado)"
 
 # A API v2 do Tempo devolve os ids de span em base64. Comparamos tudo em base64 (sem
 # converter para hexadecimal: são bytes aleatórios e qualquer passagem por texto os corrompe).
-# Colunas: serviço, tipo do span, id do span, id do pai.
+# Colunas: serviço, tipo do span, id do span, id do pai, trace_ids dos links (separados por vírgula).
 spans_of_trace() {
   curl -fsS "${TEMPO}/api/v2/traces/${trace_id}" | jq -r '
     .trace.resourceSpans[] as $rs
     | $rs.scopeSpans[].spans[]
     | [($rs.resource.attributes[] | select(.key == "service.name") | .value.stringValue),
-       .kind, .spanId, (.parentSpanId // "")]
+       .kind, .spanId, (.parentSpanId // ""), ((.links // []) | map(.traceId) | join(","))]
     | @tsv'
 }
 
-# O span que injetamos como "quem chamou", em base64, para comparar com o pai do span do BFF.
+# O trace_id forjado, em base64, para comparar com o link do span do BFF.
 # (/usr/bin/printf: o printf embutido do dash não entende \x.)
-caller_span_b64="$(/usr/bin/printf "$(printf '%s' "${caller_span}" | sed 's/../\\x&/g')" | base64)"
+forged_trace_b64="$(/usr/bin/printf "$(printf '%s' "${forged_trace_id}" | sed 's/../\\x&/g')" | base64)"
 
 # Espera o Collector e o Tempo terminarem de processar (até 30 s) por 3 spans.
 i=0
@@ -69,10 +74,11 @@ ledger_server="$(printf '%s\n' "${spans}" | awk -F'\t' '$1 == "ledger" && ($2 ==
   echo "FALHOU: faltam spans (esperado: bff servidor, bff cliente, ledger servidor)"; printf '%s\n' "${spans}"; exit 1; }
 
 field() { printf '%s' "$1" | cut -f"$2"; }
-[ "$(field "${bff_server}" 4)" = "${caller_span_b64}" ] || { echo "FALHOU: o span do BFF não continua o traceparent de quem chamou"; exit 1; }
+[ -z "$(field "${bff_server}" 4)" ] || { echo "FALHOU: o span do BFF tem pai: o traceparent de entrada foi continuado em vez de virar link"; exit 1; }
+[ "$(field "${bff_server}" 5)" = "${forged_trace_b64}" ] || { echo "FALHOU: o span do BFF não guardou o contexto recebido como link"; exit 1; }
 [ "$(field "${bff_client}" 4)" = "$(field "${bff_server}" 3)" ] || { echo "FALHOU: o span de cliente não é filho do span do servidor do BFF"; exit 1; }
 [ "$(field "${ledger_server}" 4)" = "$(field "${bff_client}" 3)" ] || { echo "FALHOU: o span do ledger não é filho do span de cliente do BFF (traceparent não chegou)"; exit 1; }
-echo "ok: um único trace, com bff (servidor) -> bff (cliente gRPC) -> ledger (servidor), encadeados"
+echo "ok: um único trace, raiz no BFF (traceparent de entrada só como link): bff (servidor) -> bff (cliente gRPC) -> ledger (servidor)"
 
 # Logs: os dois serviços escreveram uma linha com este trace_id.
 log_services() {

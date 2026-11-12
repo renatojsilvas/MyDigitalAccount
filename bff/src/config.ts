@@ -15,6 +15,11 @@ const envSchema = z.object({
   // Prazos da home (ADR-0005): menores que o SLO de 300 ms; o extrato é cortado antes de propósito.
   LEDGER_BALANCE_TIMEOUT_MS: z.coerce.number().int().positive().default(250),
   LEDGER_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(200),
+  // Segredo HS256 do JWT (ADR-0006). Sem valor padrão, nem em desenvolvimento.
+  BFF_JWT_SECRET: z.string().min(32, "precisa ter pelo menos 32 caracteres"),
+  BFF_JWT_TTL_SECONDS: z.coerce.number().int().min(1).max(86_400).default(900),
+  // Login de demonstração (sem senha). Padrão: ligado fora de production; em production, nunca.
+  BFF_DEMO_LOGIN: z.stringbool().optional(),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 });
@@ -29,6 +34,10 @@ export interface Config {
   readonly ledgerTimeoutMs: number;
   readonly ledgerBalanceTimeoutMs: number;
   readonly ledgerStatementTimeoutMs: number;
+  readonly jwtSecret: string;
+  readonly jwtTtlSeconds: number;
+  /** Rota POST /auth/demo-login registrada? Nunca em production (ADR-0006). */
+  readonly demoLogin: boolean;
   /** Ausente: nada é exportado por OTLP; os logs seguem no stdout. */
   readonly otlpEndpoint: string | undefined;
   readonly shutdownTimeoutMs: number;
@@ -56,6 +65,12 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     throw new ConfigError(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
   }
   const e = parsed.data;
+  const demoLogin = e.BFF_DEMO_LOGIN ?? e.ENVIRONMENT !== "production";
+  if (demoLogin && e.ENVIRONMENT === "production") {
+    throw new ConfigError([
+      "BFF_DEMO_LOGIN: o login de demonstração não pode ficar ligado em production",
+    ]);
+  }
   return {
     environment: e.ENVIRONMENT,
     logLevel: e.LOG_LEVEL,
@@ -66,6 +81,9 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
     ledgerTimeoutMs: e.LEDGER_TIMEOUT_MS,
     ledgerBalanceTimeoutMs: e.LEDGER_BALANCE_TIMEOUT_MS,
     ledgerStatementTimeoutMs: e.LEDGER_STATEMENT_TIMEOUT_MS,
+    jwtSecret: e.BFF_JWT_SECRET,
+    jwtTtlSeconds: e.BFF_JWT_TTL_SECONDS,
+    demoLogin,
     otlpEndpoint: e.OTEL_EXPORTER_OTLP_ENDPOINT,
     shutdownTimeoutMs: e.SHUTDOWN_TIMEOUT_MS,
   };
