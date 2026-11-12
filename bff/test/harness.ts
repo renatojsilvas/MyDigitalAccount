@@ -53,9 +53,11 @@ export function testConfig(env: Record<string, string> = {}): Config {
   return loadConfig({
     ENVIRONMENT: "test",
     LOG_LEVEL: "debug",
-    LEDGER_TIMEOUT_MS: "150",
-    LEDGER_BALANCE_TIMEOUT_MS: "150",
-    LEDGER_STATEMENT_TIMEOUT_MS: "80",
+    // Prazos generosos: o caminho de sucesso nunca deve depender da velocidade da máquina. Os
+    // testes de timeout passam um prazo curto e um handler que nunca responde (`hang`).
+    LEDGER_TIMEOUT_MS: "10000",
+    LEDGER_BALANCE_TIMEOUT_MS: "10000",
+    LEDGER_STATEMENT_TIMEOUT_MS: "10000",
     BFF_JWT_SECRET: TEST_JWT_SECRET,
     ...env,
   });

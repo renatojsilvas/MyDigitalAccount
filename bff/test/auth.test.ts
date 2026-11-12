@@ -15,7 +15,7 @@ afterEach(async () => {
   await h.close();
 });
 
-const sleepLedger = { getBalance: () => ({ accountId: "a", balanceCents: 1n }) };
+const balanceOnlyLedger = { getBalance: () => ({ accountId: "a", balanceCents: 1n }) };
 
 describe("autenticação do GET /home", () => {
   const rejected: { name: string; auth: () => string | undefined }[] = [
@@ -56,7 +56,7 @@ describe("autenticação do GET /home", () => {
   ];
 
   it.each(rejected)("recusa com 401 genérico: $name", async ({ auth }) => {
-    h = createHarness(undefined, testConfig(), { ledger: sleepLedger });
+    h = createHarness(undefined, testConfig(), { ledger: balanceOnlyLedger });
     const authorization = auth();
     const res = await h.app.inject({
       url: "/home",
@@ -71,7 +71,7 @@ describe("autenticação do GET /home", () => {
   });
 
   it("não vaza o token nem o motivo no log", async () => {
-    h = createHarness(undefined, testConfig(), { ledger: sleepLedger });
+    h = createHarness(undefined, testConfig(), { ledger: balanceOnlyLedger });
     const token = forgeToken(validClaims("acc-1"), {
       secret: "outro-segredo-com-mais-de-32-caracteres!!",
     });
@@ -102,7 +102,7 @@ describe("autenticação do GET /home", () => {
 
   it("o token emitido pelo BFF expira no prazo configurado", async () => {
     h = createHarness(undefined, testConfig({ BFF_JWT_TTL_SECONDS: "600" }), {
-      ledger: sleepLedger,
+      ledger: balanceOnlyLedger,
     });
     const [, payload] = (await h.token("acc-1")).split(".");
     const claims = JSON.parse(Buffer.from(payload ?? "", "base64url").toString()) as {

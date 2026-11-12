@@ -11,8 +11,9 @@ import {
   ConnectError,
   Direction,
   fakeLedgerTransport,
+  gate,
+  hang,
   posting,
-  sleep,
   type LedgerImpl,
 } from "./fake-ledger.js";
 
@@ -21,15 +22,21 @@ interface Degradation {
   reason: DegradedReason;
 }
 
-function setup(impl: LedgerImpl) {
+/** Prazos generosos por padrão; os testes de timeout os encurtam e usam um handler que nunca responde. */
+interface Deadlines {
+  balanceMs?: number;
+  statementMs?: number;
+}
+
+function setup(impl: LedgerImpl, deadlines: Deadlines = {}) {
   const degradations: Degradation[] = [];
   const observer: HomeObserver = {
     degraded: (section, reason) => void degradations.push({ section, reason }),
   };
   const ledger = createLedgerClient(fakeLedgerTransport(impl), {
-    timeoutMs: 100,
-    balanceTimeoutMs: 100,
-    statementTimeoutMs: 50,
+    timeoutMs: 10_000,
+    balanceTimeoutMs: deadlines.balanceMs ?? 10_000,
+    statementTimeoutMs: deadlines.statementMs ?? 10_000,
   });
   return { service: createHomeService({ ledger, observer }), degradations };
 }
@@ -52,35 +59,42 @@ describe("serviço da home", () => {
   });
 
   it("as duas chamadas saem em paralelo", async () => {
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const track =
-      <T>(value: T) =>
-      async () => {
-        maxInFlight = Math.max(maxInFlight, ++inFlight);
-        await sleep(20);
-        inFlight--;
-        return value;
-      };
-    const { service } = setup({
-      getBalance: track({ accountId: "a", balanceCents: 1n }),
-      listStatement: track({ postings: [], nextPageToken: "" }),
-    });
-    await service.home("a", ROOT_CONTEXT);
-    expect(maxInFlight).toBe(2);
+    // Barreira: cada handler só responde quando os DOIS já chegaram ao ledger. Se as chamadas
+    // fossem em sequência, o primeiro ficaria esperando para sempre (e estouraria o prazo).
+    const bothArrived = gate();
+    let arrived = 0;
+    const arrive = async () => {
+      if (++arrived === 2) bothArrived.open();
+      await bothArrived.wait();
+    };
+    const { service } = setup(
+      {
+        getBalance: async () => {
+          await arrive();
+          return { accountId: "a", balanceCents: 1n };
+        },
+        listStatement: async () => {
+          await arrive();
+          return { postings: [], nextPageToken: "" };
+        },
+      },
+      { balanceMs: 2_000, statementMs: 2_000 },
+    );
+    const res = await service.home("a", ROOT_CONTEXT);
+    expect(res.ok).toBe(true);
+    expect(arrived).toBe(2);
   });
 
   const statementFailures: {
     name: string;
     run: LedgerImpl["listStatement"];
     reason: DegradedReason;
+    deadlines?: Deadlines;
   }[] = [
     {
       name: "lento (estoura o prazo do extrato)",
-      run: async () => {
-        await sleep(120);
-        return { postings: [], nextPageToken: "" };
-      },
+      run: (_req, ctx) => hang(ctx),
+      deadlines: { statementMs: 20 },
       reason: "timeout",
     },
     {
@@ -99,7 +113,10 @@ describe("serviço da home", () => {
     },
   ];
   it.each(statementFailures)("extrato $name: home com saldo e extrato indisponível", async (f) => {
-    const { service, degradations } = setup({ getBalance: okBalance, listStatement: f.run });
+    const { service, degradations } = setup(
+      { getBalance: okBalance, listStatement: f.run },
+      f.deadlines,
+    );
     const res = await service.home("a", ROOT_CONTEXT);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -108,13 +125,16 @@ describe("serviço da home", () => {
     expect(degradations).toEqual([{ section: "statement", reason: f.reason }]);
   });
 
-  const balanceFailures: { name: string; run: LedgerImpl["getBalance"]; kind: string }[] = [
+  const balanceFailures: {
+    name: string;
+    run: LedgerImpl["getBalance"];
+    kind: string;
+    deadlines?: Deadlines;
+  }[] = [
     {
       name: "lento",
-      run: async () => {
-        await sleep(150);
-        return { accountId: "a", balanceCents: 1n };
-      },
+      run: (_req, ctx) => hang(ctx),
+      deadlines: { balanceMs: 20 },
       kind: "timeout",
     },
     {
@@ -133,7 +153,10 @@ describe("serviço da home", () => {
     },
   ];
   it.each(balanceFailures)("saldo $name: a home falha (não há saldo aproximado)", async (f) => {
-    const { service, degradations } = setup({ getBalance: f.run, listStatement: okStatement });
+    const { service, degradations } = setup(
+      { getBalance: f.run, listStatement: okStatement },
+      f.deadlines,
+    );
     const res = await service.home("a", ROOT_CONTEXT);
     expect(res).toMatchObject({ ok: false, error: { kind: f.kind } });
     expect(degradations).toEqual([]); // falha do essencial não é "degradação"

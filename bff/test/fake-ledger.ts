@@ -38,7 +38,29 @@ export function rejection(code: Code, reason: number, message = "recusado"): Con
 export const accountNotFound = (): ConnectError =>
   rejection(Code.NotFound, ErrorReason.ACCOUNT_NOT_FOUND, "account not found");
 
-export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/**
+ * Handler que nunca responde por conta própria: só termina quando o cliente cancela (o prazo
+ * estoura). Assim "lento" não depende de quanto tempo o relógio real leva: o teste usa um prazo
+ * curto e o resultado é o mesmo com a máquina folgada ou sobrecarregada.
+ */
+export function hang(ctx: { readonly signal: AbortSignal }): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    const onAbort = () => {
+      reject(new ConnectError("cancelado pelo cliente", Code.Canceled));
+    };
+    if (ctx.signal.aborted) onAbort();
+    else ctx.signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Portão: `wait()` só resolve depois de `open()`. Ordena eventos sem depender de duração. */
+export function gate() {
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { open, wait: () => opened };
+}
 
 export function posting(n: number, direction: Direction = Direction.CREDIT) {
   return {

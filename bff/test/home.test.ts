@@ -2,7 +2,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { afterEach, describe, expect, it } from "vitest";
 import { homeResponseSchema } from "../src/modules/home/schema.js";
 import { Code, ConnectError, createHarness, testConfig, type Harness } from "./harness.js";
-import { accountNotFound, Direction, posting, sleep, type LedgerImpl } from "./fake-ledger.js";
+import { accountNotFound, Direction, hang, posting, type LedgerImpl } from "./fake-ledger.js";
 
 let h: Harness;
 afterEach(async () => {
@@ -46,13 +46,9 @@ describe("GET /home", () => {
 });
 
 describe("degradação parcial (critério de pronto da Fase 2)", () => {
-  const slowStatement: LedgerImpl = {
-    ...okLedger,
-    listStatement: async () => {
-      await sleep(200); // acima do prazo do extrato (80 ms nos testes)
-      return { postings: [], nextPageToken: "" };
-    },
-  };
+  // Extrato que nunca responde + prazo curto: o timeout dispara sem depender da velocidade da máquina.
+  const slowStatement: LedgerImpl = { ...okLedger, listStatement: (_req, ctx) => hang(ctx) };
+  const shortStatement = testConfig({ LEDGER_STATEMENT_TIMEOUT_MS: "20" });
   const downStatement: LedgerImpl = {
     ...okLedger,
     listStatement: () => {
@@ -61,10 +57,10 @@ describe("degradação parcial (critério de pronto da Fase 2)", () => {
   };
 
   it.each([
-    ["lento", slowStatement, "timeout"],
-    ["fora do ar", downStatement, "unavailable"],
-  ])("extrato %s: 200 com saldo e extrato indisponível", async (_name, ledger, reason) => {
-    const res = await getHome(ledger);
+    ["lento", slowStatement, shortStatement, "timeout"],
+    ["fora do ar", downStatement, testConfig(), "unavailable"],
+  ])("extrato %s: 200 com saldo e extrato indisponível", async (_name, ledger, config, reason) => {
+    const res = await getHome(ledger, config);
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       balanceCents: 123_456,
@@ -73,7 +69,7 @@ describe("degradação parcial (critério de pronto da Fase 2)", () => {
   });
 
   it("aparece no contador de respostas degradadas", async () => {
-    await getHome(slowStatement);
+    await getHome(slowStatement, shortStatement);
     await getHome(downStatement);
     const metric = await h.metric("bff.home.degraded");
     expect(metric).toBeDefined();
@@ -91,7 +87,7 @@ describe("degradação parcial (critério de pronto da Fase 2)", () => {
   });
 
   it("aparece no trace: span do servidor marcado e span do cliente com erro", async () => {
-    await getHome(slowStatement);
+    await getHome(slowStatement, shortStatement);
     const server = h.spanNamed("GET /home");
     expect(server.attributes).toMatchObject({
       "home.degraded": true,
@@ -111,7 +107,7 @@ describe("degradação parcial (critério de pronto da Fase 2)", () => {
   });
 
   it("registra a degradação no log da requisição, sem dado pessoal", async () => {
-    await getHome(slowStatement);
+    await getHome(slowStatement, shortStatement);
     const line = h.stdout().find((l) => l.msg === "request completed");
     expect(line).toMatchObject({ route: "/home", status: 200, degraded: ["statement"] });
   });
@@ -123,13 +119,12 @@ describe("falha do saldo (essencial): a home falha", () => {
     getBalance: LedgerImpl["getBalance"];
     status: number;
     code: string;
+    config?: ReturnType<typeof testConfig>;
   }[] = [
     {
       name: "lento",
-      getBalance: async () => {
-        await sleep(250);
-        return { accountId: "a", balanceCents: 1n };
-      },
+      getBalance: (_req, ctx) => hang(ctx),
+      config: testConfig({ LEDGER_BALANCE_TIMEOUT_MS: "20" }),
       status: 504,
       code: "dependency_timeout",
     },
@@ -160,8 +155,8 @@ describe("falha do saldo (essencial): a home falha", () => {
     },
   ];
 
-  it.each(cases)("saldo $name: $status $code", async ({ getBalance, status, code }) => {
-    const res = await getHome({ ...okLedger, getBalance });
+  it.each(cases)("saldo $name: $status $code", async ({ getBalance, status, code, config }) => {
+    const res = await getHome({ ...okLedger, getBalance }, config);
     expect(res.statusCode).toBe(status);
     expect(res.json()).toMatchObject({ code, status });
     expect(res.json()).toHaveProperty("trace_id");

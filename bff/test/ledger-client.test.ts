@@ -8,19 +8,22 @@ import {
   Direction,
   ErrorReason,
   fakeLedgerTransport,
+  gate,
+  hang,
   posting,
   rejection,
-  sleep,
   type LedgerImpl,
 } from "./fake-ledger.js";
 
 const call = { context: ROOT_CONTEXT };
 
-function clientFor(impl: LedgerImpl): LedgerClient {
+/** Prazos generosos por padrão: só os testes de timeout os encurtam (com um handler que nunca responde). */
+function clientFor(impl: LedgerImpl, timeouts: { statementTimeoutMs?: number } = {}): LedgerClient {
   return createLedgerClient(fakeLedgerTransport(impl), {
-    timeoutMs: 100,
-    balanceTimeoutMs: 100,
-    statementTimeoutMs: 50,
+    timeoutMs: 10_000,
+    balanceTimeoutMs: 10_000,
+    statementTimeoutMs: 10_000,
+    ...timeouts,
   });
 }
 
@@ -111,22 +114,26 @@ describe("adaptador do ledger", () => {
     });
   });
 
-  it("cada chamada tem o seu prazo: o extrato estoura antes do saldo", async () => {
-    const c = clientFor({
-      getBalance: async () => {
-        await sleep(70); // acima do prazo do extrato (50), abaixo do do saldo (100)
-        return { accountId: "a", balanceCents: 1n };
+  it("cada chamada tem o seu prazo: o do extrato estourar não corta o saldo", async () => {
+    const statementTimedOut = gate();
+    const c = clientFor(
+      {
+        // O saldo só responde DEPOIS que o extrato já estourou o prazo dele: a ordem vem do portão,
+        // não de durações, então vale com a máquina folgada ou sobrecarregada.
+        getBalance: async () => {
+          await statementTimedOut.wait();
+          return { accountId: "a", balanceCents: 1n };
+        },
+        listStatement: (_req, ctx) => hang(ctx),
       },
-      listStatement: async () => {
-        await sleep(70);
-        return { postings: [], nextPageToken: "" };
-      },
-    });
-    const [balance, statement] = await Promise.all([
-      c.getBalance("a", call),
-      c.listStatement("a", 10, call),
-    ]);
-    expect(balance.ok).toBe(true);
+      { statementTimeoutMs: 20 },
+    );
+
+    const balance = c.getBalance("a", call);
+    const statement = await c.listStatement("a", 10, call);
+    statementTimedOut.open();
+
     expect(statement).toEqual({ ok: false, error: { kind: "timeout", dependency: "ledger" } });
+    expect(await balance).toEqual({ ok: true, value: 1n });
   });
 });

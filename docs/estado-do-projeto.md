@@ -29,8 +29,8 @@ Referências: `docs/plano-conta-digital.md` (plano), `docs/arquitetura-conta-dig
    conectou nesta sessão): `http://127.0.0.1:5173`, CPF `12345678909`; para forçar o aviso, suba o BFF com
    `LEDGER_STATEMENT_TIMEOUT_MS=1`.
 
-`make lint test`: Go com 12 pacotes (`-race`), BFF com 116 testes Vitest, web com 13. Uma execução completa teve 1
-teste do BFF falhando sem que eu identificasse qual (ver seção 8); 5 execuções seguintes passaram.
+`make lint test`: Go com 12 pacotes (`-race`), BFF com 116 testes Vitest, web com 13. A suíte do BFF foi estressada
+(8 processos consumindo CPU em 4 CPUs): 0 falhas em 20 execuções (ver "Resolvidas na Fase 2", seção 8).
 
 **Critério de pronto da Fase 1**, verificado:
 
@@ -316,8 +316,6 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
   calibrar na Fase 7. O `/readyz` não consulta o ledger (ADR-0002).
 - **Sem imagem final do `web`** (só `dev`, com o proxy do Vite): foge da regra de imagem final por serviço. Se quiser,
   nginx não-root com digest fixado.
-- **Teste do BFF instável uma vez** sob carga (115/116 numa execução completa; não identifiquei qual). Suspeitos: testes
-  com folga de 20 a 30 ms (`ledger-client.test.ts`, `home.test.ts`). Ampliar as folgas se reaparecer.
 - **`BFF_JWT_SECRET` no seu `.env`** (obrigatório; valor de desenvolvimento no `.env.example`). Sem ele, nenhum
   `docker compose` funciona. O CI copia o `.env.example`, então não é afetado.
 
@@ -348,7 +346,11 @@ geral foi removido. O SLI usa a fronteira de 250 ms do histograma (não há 300 
 - `psql` da imagem `tools` é o 15 contra servidor 18 (use `docker compose exec postgres psql`).
 - `gen/` e `sqlcgen/` são pré-requisito do build das imagens finais; exportação de telemetria opt-in; `service.version` = `dev`.
 
-**Resolvidas na Fase 2**: login de demonstração acha a conta (RPC no ledger); `ErrorInfo` gerado em TypeScript;
+**Resolvidas na Fase 2**: teste instável do BFF (era o `grpc-wire.test.ts`: 11 falhas em 13 execuções sob CPU
+disputada; a causa era um prazo de 150 ms numa conexão HTTP/2 real e fria, que não fazia parte do que o teste prova;
+agora os caminhos de sucesso usam prazo de 10 s e os de timeout usam um handler que nunca responde, `hang`, com prazo
+curto; paralelismo e isolamento de prazos são provados com barreira e portão, sem `sleep`; 0 falhas em 20 execuções
+sob a mesma carga); login de demonstração acha a conta (RPC no ledger); `ErrorInfo` gerado em TypeScript;
 `traceparent` de entrada deixou de ser confiado (revisto com a autenticação); título do dashboard "visão geral"; CI do
 GitHub corrigido (`additional_contexts`).
 

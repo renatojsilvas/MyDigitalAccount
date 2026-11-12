@@ -1,13 +1,19 @@
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { afterEach, describe, expect, it } from "vitest";
-import { Code, ConnectError, createHarness, type Harness, type LedgerBehavior } from "./harness.js";
+import {
+  Code,
+  ConnectError,
+  createHarness,
+  testConfig,
+  type Harness,
+  type LedgerBehavior,
+} from "./harness.js";
+import { hang } from "./fake-ledger.js";
 
 let h: Harness;
 afterEach(async () => {
   await h.close();
 });
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("GET /ping", () => {
   it("devolve o view model montado a partir do ledger", async () => {
@@ -34,7 +40,14 @@ describe("GET /ping", () => {
 });
 
 describe("falhas do ledger viram respostas HTTP previsíveis", () => {
-  const cases: { name: string; behavior: LedgerBehavior; status: number; code: string }[] = [
+  const cases: {
+    name: string;
+    behavior: LedgerBehavior;
+    status: number;
+    code: string;
+    /** Prazo curto só para o caso do ledger que nunca responde. */
+    ledgerTimeoutMs?: string;
+  }[] = [
     {
       name: "indisponível",
       behavior: () => {
@@ -45,10 +58,8 @@ describe("falhas do ledger viram respostas HTTP previsíveis", () => {
     },
     {
       name: "lento demais",
-      behavior: async () => {
-        await sleep(400);
-        return { message: "x", service: "ledger" } as never;
-      },
+      behavior: (_req, ctx) => hang(ctx),
+      ledgerTimeoutMs: "30",
       status: 504,
       code: "dependency_timeout",
     },
@@ -78,8 +89,11 @@ describe("falhas do ledger viram respostas HTTP previsíveis", () => {
     },
   ];
 
-  it.each(cases)("$name -> $status $code", async ({ behavior, status, code }) => {
-    h = createHarness(behavior);
+  it.each(cases)("$name -> $status $code", async ({ behavior, status, code, ledgerTimeoutMs }) => {
+    h = createHarness(
+      behavior,
+      testConfig(ledgerTimeoutMs ? { LEDGER_TIMEOUT_MS: ledgerTimeoutMs } : {}),
+    );
     const res = await h.app.inject({ url: "/ping?message=x" });
 
     expect(res.statusCode).toBe(status);

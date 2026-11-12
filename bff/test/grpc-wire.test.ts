@@ -72,7 +72,7 @@ describe("BFF -> ledger por gRPC sobre HTTP/2", () => {
     );
     h = createHarness(
       undefined,
-      testConfig({ LEDGER_GRPC_URL: ledger.url, LEDGER_TIMEOUT_MS: "150" }),
+      testConfig({ LEDGER_GRPC_URL: ledger.url, LEDGER_TIMEOUT_MS: "10000" }),
       {
         realTransport: true,
       },
@@ -85,7 +85,7 @@ describe("BFF -> ledger por gRPC sobre HTTP/2", () => {
     const headers = ledger.requests[0];
     expect(headers?.get("content-type")).toContain("application/grpc");
     // O timeout do BFF vira deadline no ledger: o Go o enxerga como prazo do contexto.
-    expect(headers?.get("grpc-timeout")).toBe("150m");
+    expect(headers?.get("grpc-timeout")).toBe("10000m");
 
     const client = h.spanNamed("conta.ping.v1.PingService/Ping");
     expect(headers?.get("traceparent")).toBe(
@@ -112,25 +112,32 @@ describe("BFF -> ledger por gRPC sobre HTTP/2", () => {
   });
 
   it("ledger lento: o prazo é respeitado e a resposta é 504 sem esperar o ledger", async () => {
-    ledger = await startFakeLedger(async (req) => {
-      await new Promise((r) => setTimeout(r, 1_000));
-      return { message: req.message, service: "ledger" } as PingResponse;
+    let handlerFinished = false;
+    ledger = await startFakeLedger(async (_req, ctx) => {
+      try {
+        // Não responde nunca: só termina quando o BFF cancela (o prazo estourou).
+        await new Promise<never>((_, reject) => {
+          ctx.signal.addEventListener("abort", () => {
+            reject(new Error("cancelado"));
+          });
+        });
+      } finally {
+        handlerFinished = true;
+      }
+      return { message: "", service: "ledger" } as PingResponse;
     });
     h = createHarness(
       undefined,
-      testConfig({ LEDGER_GRPC_URL: ledger.url, LEDGER_TIMEOUT_MS: "100" }),
-      {
-        realTransport: true,
-      },
+      testConfig({ LEDGER_GRPC_URL: ledger.url, LEDGER_TIMEOUT_MS: "50" }),
+      { realTransport: true },
     );
 
-    const started = performance.now();
     const res = await h.app.inject({ url: "/ping" });
-    const elapsed = performance.now() - started;
 
     expect(res.statusCode).toBe(504);
     expect(res.json()).toMatchObject({ code: "dependency_timeout" });
-    expect(elapsed).toBeLessThan(700); // bem antes do 1s do ledger
+    // Sem relógio: a resposta saiu com o handler do ledger ainda pendente, ou seja, o BFF não esperou por ele.
+    expect(handlerFinished).toBe(false);
     expect(
       h.spanNamed("conta.ping.v1.PingService/Ping").attributes["rpc.response.status_code"],
     ).toBe("DEADLINE_EXCEEDED");
