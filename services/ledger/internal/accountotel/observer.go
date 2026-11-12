@@ -57,7 +57,7 @@ func New(mp metric.MeterProvider) (*Observer, error) {
 	}
 	if o.rejections, err = m.Int64Counter("ledger.rejections",
 		metric.WithUnit("{request}"),
-		metric.WithDescription("Escritas recusadas pelo negócio (saldo insuficiente, conta inexistente, CPF já cadastrado).")); err != nil {
+		metric.WithDescription("Escritas recusadas pelo negócio (saldo insuficiente, conta inexistente, CPF já cadastrado, estorno inválido).")); err != nil {
 		return nil, err
 	}
 	if o.replays, err = m.Int64Counter("ledger.idempotency.replays",
@@ -123,6 +123,12 @@ func rejectionLabel(err error) string {
 		return "account_not_found"
 	case errors.Is(err, account.ErrAccountAlreadyExists):
 		return "account_already_exists"
+	case errors.Is(err, account.ErrEntryNotFound):
+		return "entry_not_found"
+	case errors.Is(err, account.ErrEntryAlreadyReversed):
+		return "entry_already_reversed"
+	case errors.Is(err, account.ErrEntryNotReversible):
+		return "entry_not_reversible"
 	default:
 		return "other"
 	}

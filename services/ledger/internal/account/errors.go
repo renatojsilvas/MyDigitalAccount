@@ -18,6 +18,12 @@ var (
 	ErrInsufficientFunds = errors.New("account: insufficient funds")
 	// ErrIdempotencyKeyReused indica a mesma chave de idempotência com um pedido diferente.
 	ErrIdempotencyKeyReused = errors.New("account: idempotency key reused with a different request")
+	// ErrEntryNotFound indica que o lançamento informado não existe.
+	ErrEntryNotFound = errors.New("account: entry not found")
+	// ErrEntryAlreadyReversed indica que o lançamento já tem um estorno.
+	ErrEntryAlreadyReversed = errors.New("account: entry already reversed")
+	// ErrEntryNotReversible indica um lançamento que a regra não permite estornar.
+	ErrEntryNotReversible = errors.New("account: entry is not reversible")
 )
 
 // isBusinessRejection diz se o erro é uma recusa de negócio, que é gravada junto com a chave
@@ -26,7 +32,10 @@ var (
 func isBusinessRejection(err error) bool {
 	return errors.Is(err, ErrInsufficientFunds) ||
 		errors.Is(err, ErrAccountNotFound) ||
-		errors.Is(err, ErrAccountAlreadyExists)
+		errors.Is(err, ErrAccountAlreadyExists) ||
+		errors.Is(err, ErrEntryNotFound) ||
+		errors.Is(err, ErrEntryAlreadyReversed) ||
+		errors.Is(err, ErrEntryNotReversible)
 }
 
 // Violações de invariante: indicam bug ou limite físico, nunca um pedido comum do cliente.

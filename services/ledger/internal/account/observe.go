@@ -21,11 +21,11 @@ const (
 // WriteEvent descreve uma escrita concluída, para métricas de negócio e atributos de trace.
 // Erros de infraestrutura não geram evento: aparecem nas métricas RED da borda.
 type WriteEvent struct {
-	Operation string // open_account, credit ou debit
+	Operation string // open_account, credit, debit ou reverse
 	Outcome   Outcome
 	// Rejection é o erro de domínio quando Outcome é OutcomeRejected.
 	Rejection error
-	// Reason é o motivo do lançamento (opening, external); vazio na abertura de conta.
+	// Reason é o motivo do lançamento (opening, external, reversal); vazio na abertura de conta.
 	Reason    string
 	Amount    Money
 	AccountID ID

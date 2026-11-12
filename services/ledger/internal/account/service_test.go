@@ -25,6 +25,9 @@ type postingJSON struct {
 	Amount, Balance    int64
 	Description        string
 	PostedAt           time.Time
+	Reason             int
+	Reference          string
+	Reverses           string
 }
 
 type accountJSON struct {
@@ -43,6 +46,7 @@ func (fakeCodec) EncodePosting(p account.Posting) ([]byte, error) {
 	return json.Marshal(postingJSON{
 		EntryID: p.EntryID.String(), AccountID: p.AccountID.String(), Direction: int(p.Direction),
 		Amount: p.Amount.Cents(), Balance: p.BalanceAfter.Cents(), Description: p.Description.String(), PostedAt: p.PostedAt,
+		Reason: int(p.Reason), Reference: p.Reference.String(), Reverses: p.ReversesEntryID.String(),
 	})
 }
 
@@ -63,10 +67,19 @@ func (fakeCodec) DecodePosting(b []byte) (account.Posting, error) {
 	if err != nil {
 		return account.Posting{}, err
 	}
+	ref, err := account.NewExternalReference(j.Reference)
+	if err != nil {
+		return account.Posting{}, err
+	}
+	reverses, err := account.ParseEntryID(j.Reverses)
+	if err != nil {
+		return account.Posting{}, err
+	}
 	return account.Posting{
 		EntryID: account.EntryID(entry), AccountID: id, Direction: account.Direction(j.Direction),
 		Amount: account.MoneyFromCents(j.Amount), BalanceAfter: account.MoneyFromCents(j.Balance),
 		Description: desc, PostedAt: j.PostedAt,
+		Reason: account.EntryReason(j.Reason), Reference: ref, ReversesEntryID: reverses,
 	}, nil
 }
 
@@ -97,11 +110,12 @@ func (fakeCodec) DecodeAccount(b []byte) (account.Account, error) {
 
 func (fakeCodec) EncodeRejection(err error) (int32, []byte, error) {
 	switch {
-	case errors.Is(err, account.ErrAccountNotFound):
+	case errors.Is(err, account.ErrAccountNotFound), errors.Is(err, account.ErrEntryNotFound):
 		return 5, []byte(err.Error()), nil
 	case errors.Is(err, account.ErrAccountAlreadyExists):
 		return 6, []byte(err.Error()), nil
-	case errors.Is(err, account.ErrInsufficientFunds):
+	case errors.Is(err, account.ErrInsufficientFunds), errors.Is(err, account.ErrEntryAlreadyReversed),
+		errors.Is(err, account.ErrEntryNotReversible):
 		return 9, []byte(err.Error()), nil
 	}
 	return 0, nil, fmt.Errorf("não é recusa de negócio: %w", err)

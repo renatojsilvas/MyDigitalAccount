@@ -17,6 +17,51 @@ const (
 	directionCredit = "credit"
 )
 
+func reasonToDB(r account.EntryReason) (string, error) {
+	switch r {
+	case account.ReasonOpening, account.ReasonExternal, account.ReasonReversal:
+		return r.String(), nil
+	default:
+		return "", fmt.Errorf("postgres: motivo de lançamento desconhecido: %d", r)
+	}
+}
+
+func reasonFromDB(s string) (account.EntryReason, error) {
+	for _, r := range []account.EntryReason{account.ReasonOpening, account.ReasonExternal, account.ReasonReversal} {
+		if s == r.String() {
+			return r, nil
+		}
+	}
+	return 0, fmt.Errorf("%w: motivo %q", errCorruptRow, s)
+}
+
+// referenceToDB grava "sem referência" como NULL, que o CHECK do banco aceita.
+func referenceToDB(r account.ExternalReference) pgtype.Text {
+	return pgtype.Text{String: r.String(), Valid: !r.IsZero()}
+}
+
+func referenceFromDB(t pgtype.Text) (account.ExternalReference, error) {
+	if !t.Valid {
+		return account.ExternalReference{}, nil
+	}
+	r, err := account.NewExternalReference(t.String)
+	if err != nil {
+		return account.ExternalReference{}, fmt.Errorf("%w: %s", errCorruptRow, err.Error())
+	}
+	return r, nil
+}
+
+func entryIDToDB(id account.EntryID) pgtype.UUID {
+	return pgtype.UUID{Bytes: [16]byte(id), Valid: !id.IsZero()}
+}
+
+func entryIDFromDB(u pgtype.UUID) account.EntryID {
+	if !u.Valid {
+		return account.EntryID{}
+	}
+	return account.EntryID(u.Bytes)
+}
+
 func statusToDB(s account.Status) (string, error) {
 	if s == account.StatusActive {
 		return statusActive, nil

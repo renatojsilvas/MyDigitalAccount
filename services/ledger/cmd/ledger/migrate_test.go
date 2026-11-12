@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"strings"
 	"testing"
 
+	"conta.local/ledger/migrations"
 	"conta.local/testkit/testpg"
 )
 
@@ -34,8 +36,13 @@ func TestRunMigrate(t *testing.T) {
 	db.EnsureRole(t, "ledger_app", "ledger-app-test")
 	env := ledgerEnv(db)
 
-	// Primeira execução aplica; a segunda encontra o banco em dia (o job pode rodar a cada deploy).
-	for i, wantApplied := range []float64{1, 0} {
+	files, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Primeira execução aplica todas; a segunda encontra o banco em dia (o job pode rodar a
+	// cada deploy).
+	for i, wantApplied := range []float64{float64(len(files)), 0} {
 		recs := migrateLogs(t, env)
 		last := recs[len(recs)-1]
 		if last["msg"] != "migrations em dia" || last["applied"] != wantApplied {

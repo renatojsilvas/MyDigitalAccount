@@ -7,6 +7,15 @@ type StatementLine struct {
 	Posting Posting
 }
 
+// StoredEntry é um lançamento gravado, lido para ser estornado.
+type StoredEntry struct {
+	ID     EntryID
+	Reason EntryReason
+	Legs   []Leg
+	// CustomerAccountID é a conta de cliente do lançamento (zero se não houver).
+	CustomerAccountID ID
+}
+
 // IdempotencyRecord é o registro de uma chave de idempotência (ADR-0004, seção 3).
 //
 // O resultado é opaco para o domínio: StatusCode e Body são o que a borda gRPC gravou

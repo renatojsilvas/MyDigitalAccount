@@ -60,3 +60,15 @@ func TestIsBusinessRejection(t *testing.T) {
 		}
 	}
 }
+
+// Sem referência, o hash é o mesmo de antes de o campo existir (ADR-0009, seção 3).
+func TestHashWithoutReferenceIsUnchanged(t *testing.T) {
+	fields := []string{"conta", "100", "1", "desc"}
+	if !bytes.Equal(requestHash(withReference(ExternalReference{}, fields...)...), requestHash(fields...)) {
+		t.Fatal("hash sem referência mudou")
+	}
+	ref := ExternalReference{value: "transfer-1"}
+	if bytes.Equal(requestHash(withReference(ref, fields...)...), requestHash(fields...)) {
+		t.Fatal("hash com referência igual ao sem referência")
+	}
+}

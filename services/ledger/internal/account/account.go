@@ -73,7 +73,7 @@ func (a *Account) Credit(m Movement, reason CreditReason) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("credit account %s: %w", a.id, err)
 	}
-	return a.apply(m, DirectionCredit, balance,
+	return a.apply(m, DirectionCredit, balance, reason.entryReason(), EntryID{},
 		Leg{AccountID: counter, Direction: DirectionDebit, Amount: m.Amount},
 		Leg{AccountID: a.id, Direction: DirectionCredit, Amount: m.Amount},
 	)
@@ -93,18 +93,60 @@ func (a *Account) Debit(m Movement, reason DebitReason) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("debit account %s: %w", a.id, err)
 	}
-	return a.apply(m, DirectionDebit, balance,
+	return a.apply(m, DirectionDebit, balance, ReasonExternal, EntryID{},
 		Leg{AccountID: a.id, Direction: DirectionDebit, Amount: m.Amount},
 		Leg{AccountID: counter, Direction: DirectionCredit, Amount: m.Amount},
 	)
 }
 
+// Reverse estorna o lançamento original (ADR-0009): grava um lançamento novo, de mesmo valor,
+// com as pernas invertidas. Só um débito EXTERNAL desta conta é estornável; o valor de m é
+// ignorado, porque o estorno é sempre integral. Quem chama garante que o original ainda não foi
+// estornado (a checagem precisa do banco, sob o lock desta conta).
+func (a *Account) Reverse(m Movement, original StoredEntry) (Entry, error) {
+	if original.Reason != ReasonExternal || original.CustomerAccountID != a.id {
+		return Entry{}, ErrEntryNotReversible
+	}
+	legs := make([]Leg, 0, len(original.Legs))
+	var amount Money
+	for _, l := range original.Legs {
+		inverted := l
+		switch l.Direction {
+		case DirectionDebit:
+			inverted.Direction = DirectionCredit
+		case DirectionCredit:
+			inverted.Direction = DirectionDebit
+		default:
+			return Entry{}, fmt.Errorf("%w: unknown direction %d", ErrInvalidEntry, l.Direction)
+		}
+		if l.AccountID == a.id {
+			if l.Direction != DirectionDebit {
+				return Entry{}, ErrEntryNotReversible
+			}
+			amount = l.Amount
+		}
+		legs = append(legs, inverted)
+	}
+	if amount.Cents() <= 0 {
+		return Entry{}, fmt.Errorf("%w: entry %s has no leg in account %s", ErrInvalidEntry, original.ID, a.id)
+	}
+	balance, err := a.balance.Add(amount)
+	if err != nil {
+		return Entry{}, fmt.Errorf("reverse in account %s: %w", a.id, err)
+	}
+	m.Amount = amount
+	return a.apply(m, DirectionCredit, balance, ReasonReversal, original.ID, legs...)
+}
+
 // apply valida o lançamento e só então muda o saldo: se a partida dobrada falhar, a conta
 // fica exatamente como estava.
-func (a *Account) apply(m Movement, dir Direction, balance Money, legs ...Leg) (Entry, error) {
+func (a *Account) apply(
+	m Movement, dir Direction, balance Money, reason EntryReason, reverses EntryID, legs ...Leg,
+) (Entry, error) {
 	posting := Posting{
 		EntryID: m.EntryID, AccountID: a.id, Direction: dir, Amount: m.Amount,
 		BalanceAfter: balance, Description: m.Description, PostedAt: m.PostedAt,
+		Reason: reason, Reference: m.Reference, ReversesEntryID: reverses,
 	}
 	entry, err := newEntry(m, posting, legs...)
 	if err != nil {

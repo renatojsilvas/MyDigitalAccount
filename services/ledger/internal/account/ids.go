@@ -41,6 +41,18 @@ func ParseID(s string) (ID, error) {
 	return ID(id), nil
 }
 
+// ParseEntryID valida o identificador de lançamento recebido de fora.
+func ParseEntryID(s string) (EntryID, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return EntryID{}, invalid("entry_id", "must be a UUID")
+	}
+	return EntryID(id), nil
+}
+
+// IsZero diz se o identificador não foi preenchido.
+func (id EntryID) IsZero() bool { return id == EntryID{} }
+
 func (id ID) String() string {
 	return uuid.UUID(id).String()
 }

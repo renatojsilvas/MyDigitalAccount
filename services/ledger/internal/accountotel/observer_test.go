@@ -73,6 +73,20 @@ func TestWriteFinished(t *testing.T) {
 			wantSpan:  map[string]string{"ledger.rejection": "insufficient_funds"},
 		},
 		{
+			name:       "estorno executado",
+			ev:         account.WriteEvent{Operation: "reverse", Outcome: account.OutcomeExecuted, Reason: "reversal", Amount: amount, AccountID: id},
+			wantMetric: "ledger.entries", wantValue: 1,
+			wantAttrs: map[string]string{"ledger.operation": "reverse", "ledger.reason": "reversal"},
+			wantSpan:  map[string]string{"ledger.reason": "reversal"},
+		},
+		{
+			name:       "estorno duplo recusado",
+			ev:         account.WriteEvent{Operation: "reverse", Outcome: account.OutcomeRejected, Rejection: account.ErrEntryAlreadyReversed, Reason: "reversal", AccountID: id},
+			wantMetric: "ledger.rejections", wantValue: 1,
+			wantAttrs: map[string]string{"ledger.operation": "reverse", "ledger.rejection": "entry_already_reversed"},
+			wantSpan:  map[string]string{"ledger.rejection": "entry_already_reversed"},
+		},
+		{
 			name:       "repetição",
 			ev:         account.WriteEvent{Operation: "debit", Outcome: account.OutcomeReplayed, AccountID: id},
 			wantMetric: "ledger.idempotency.replays", wantValue: 1,

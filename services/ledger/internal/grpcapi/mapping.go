@@ -33,6 +33,36 @@ func debitReasonFromProto(r ledgerv1.DebitReason) (account.DebitReason, error) {
 	return 0, &account.ValidationError{Field: "reason", Problem: "must be a known debit reason"}
 }
 
+func entryReasonToProto(r account.EntryReason) ledgerv1.EntryReason {
+	switch r {
+	case account.ReasonOpening:
+		return ledgerv1.EntryReason_ENTRY_REASON_OPENING
+	case account.ReasonExternal:
+		return ledgerv1.EntryReason_ENTRY_REASON_EXTERNAL
+	case account.ReasonReversal:
+		return ledgerv1.EntryReason_ENTRY_REASON_REVERSAL
+	default:
+		return ledgerv1.EntryReason_ENTRY_REASON_UNSPECIFIED
+	}
+}
+
+// entryReasonFromProto aceita UNSPECIFIED: respostas gravadas na tabela de idempotência antes
+// da migration 00002 não têm motivo (ADR-0009, consequências).
+func entryReasonFromProto(r ledgerv1.EntryReason) (account.EntryReason, error) {
+	switch r {
+	case ledgerv1.EntryReason_ENTRY_REASON_UNSPECIFIED:
+		return 0, nil
+	case ledgerv1.EntryReason_ENTRY_REASON_OPENING:
+		return account.ReasonOpening, nil
+	case ledgerv1.EntryReason_ENTRY_REASON_EXTERNAL:
+		return account.ReasonExternal, nil
+	case ledgerv1.EntryReason_ENTRY_REASON_REVERSAL:
+		return account.ReasonReversal, nil
+	default:
+		return 0, fmt.Errorf("grpcapi: motivo de lançamento desconhecido %v", r)
+	}
+}
+
 func directionToProto(d account.Direction) ledgerv1.Direction {
 	switch d {
 	case account.DirectionDebit:
@@ -74,7 +104,14 @@ func accountToProto(a account.Account) *ledgerv1.Account {
 }
 
 func postingToProto(p account.Posting) *ledgerv1.Posting {
+	var reverses string
+	if !p.ReversesEntryID.IsZero() {
+		reverses = p.ReversesEntryID.String()
+	}
 	return &ledgerv1.Posting{
+		Reason:            entryReasonToProto(p.Reason),
+		ExternalReference: p.Reference.String(),
+		ReversesEntryId:   reverses,
 		EntryId:           p.EntryID.String(),
 		AccountId:         p.AccountID.String(),
 		Direction:         directionToProto(p.Direction),

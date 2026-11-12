@@ -9,6 +9,31 @@ var (
 	SettlementAccountID = ID{15: 2}
 )
 
+// EntryReason diz o que um lançamento é (ADR-0009, seção 2). Só o ledger o produz: a partir
+// do motivo do pedido (crédito e débito) ou da operação (estorno).
+type EntryReason int
+
+// Motivos de lançamento.
+const (
+	ReasonOpening EntryReason = iota + 1
+	ReasonExternal
+	ReasonReversal
+)
+
+// String devolve o nome estável do motivo, usado no banco, em métricas e em traces.
+func (r EntryReason) String() string {
+	switch r {
+	case ReasonOpening:
+		return "opening"
+	case ReasonExternal:
+		return "external"
+	case ReasonReversal:
+		return "reversal"
+	default:
+		return "unknown"
+	}
+}
+
 // CreditReason é o motivo de um crédito; define a conta interna de contrapartida.
 type CreditReason int
 
@@ -37,6 +62,13 @@ func (r CreditReason) counterpart() (ID, error) {
 	default:
 		return ID{}, invalid("reason", "is not a known credit reason")
 	}
+}
+
+func (r CreditReason) entryReason() EntryReason {
+	if r == CreditOpening {
+		return ReasonOpening
+	}
+	return ReasonExternal
 }
 
 func (r DebitReason) counterpart() (ID, error) {

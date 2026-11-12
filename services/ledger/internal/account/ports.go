@@ -30,6 +30,12 @@ type Tx interface {
 	LockAccount(ctx context.Context, id ID) (Account, error)
 	SaveBalance(ctx context.Context, a Account) error
 	AppendEntry(ctx context.Context, e Entry) error
+
+	// StoredEntry lê um lançamento gravado e as suas pernas, sem travar. ErrEntryNotFound se
+	// não existir.
+	StoredEntry(ctx context.Context, id EntryID) (StoredEntry, error)
+	// EntryReversed diz se o lançamento já tem um estorno gravado.
+	EntryReversed(ctx context.Context, id EntryID) (bool, error)
 }
 
 // ResultCodec converte o resultado de uma escrita para o formato gravado na tabela de

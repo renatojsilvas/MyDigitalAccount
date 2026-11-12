@@ -40,6 +40,14 @@ func statusFor(err error) (*status.Status, bool) {
 		return withReason(codes.FailedPrecondition, "saldo insuficiente", ledgerv1.ErrorReason_ERROR_REASON_INSUFFICIENT_FUNDS, nil), true
 	case errors.Is(err, account.ErrAccountAlreadyExists):
 		return withReason(codes.AlreadyExists, "o documento já tem conta", ledgerv1.ErrorReason_ERROR_REASON_ACCOUNT_ALREADY_EXISTS, nil), true
+	case errors.Is(err, account.ErrEntryNotFound):
+		return withReason(codes.NotFound, "lançamento não encontrado", ledgerv1.ErrorReason_ERROR_REASON_ENTRY_NOT_FOUND, nil), true
+	case errors.Is(err, account.ErrEntryAlreadyReversed):
+		return withReason(codes.FailedPrecondition, "lançamento já estornado",
+			ledgerv1.ErrorReason_ERROR_REASON_ENTRY_ALREADY_REVERSED, nil), true
+	case errors.Is(err, account.ErrEntryNotReversible):
+		return withReason(codes.FailedPrecondition, "lançamento não pode ser estornado",
+			ledgerv1.ErrorReason_ERROR_REASON_ENTRY_NOT_REVERSIBLE, nil), true
 	case errors.Is(err, account.ErrIdempotencyKeyReused):
 		return withReason(codes.AlreadyExists, "chave de idempotência já usada com outro pedido",
 			ledgerv1.ErrorReason_ERROR_REASON_IDEMPOTENCY_KEY_REUSED, nil), true

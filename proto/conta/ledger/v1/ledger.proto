@@ -38,6 +38,13 @@ service LedgerService {
   // seguro repetir com a mesma chave.
   rpc Debit(DebitRequest) returns (DebitResponse);
 
+  // Estorna um lançamento: grava um lançamento novo com as pernas invertidas, que aponta
+  // para o original (ADR-0009). Só lançamentos EXTERNAL com débito na conta de cliente são
+  // estornáveis, e cada um no máximo uma vez. NOT_FOUND (ENTRY_NOT_FOUND);
+  // FAILED_PRECONDITION (ENTRY_ALREADY_REVERSED, ENTRY_NOT_REVERSIBLE). UNAVAILABLE se a
+  // conta ficou travada além do tempo limite: é seguro repetir com a mesma chave.
+  rpc Reverse(ReverseRequest) returns (ReverseResponse);
+
   // Saldo atual de uma conta de cliente. NOT_FOUND (ACCOUNT_NOT_FOUND).
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
 
@@ -61,6 +68,12 @@ enum ErrorReason {
   ERROR_REASON_INVALID_REQUEST = 4;
   // Já existe uma conta para o documento (CPF) informado.
   ERROR_REASON_ACCOUNT_ALREADY_EXISTS = 5;
+  // O lançamento informado não existe.
+  ERROR_REASON_ENTRY_NOT_FOUND = 6;
+  // O lançamento já foi estornado (por qualquer chave de idempotência).
+  ERROR_REASON_ENTRY_ALREADY_REVERSED = 7;
+  // O lançamento não pode ser estornado (não é um débito EXTERNAL de conta de cliente).
+  ERROR_REASON_ENTRY_NOT_REVERSIBLE = 8;
 }
 
 enum AccountStatus {
@@ -82,6 +95,18 @@ enum DebitReason {
   DEBIT_REASON_UNSPECIFIED = 0;
   // Dinheiro que sai do banco (o Pix enviado, na Fase 3). Contrapartida: settlement.
   DEBIT_REASON_EXTERNAL = 1;
+}
+
+// O que um lançamento é. Produzido só pelo ledger, a partir da operação e do motivo do
+// pedido; vem em cada Posting para o extrato não precisar interpretar texto (ADR-0009).
+enum EntryReason {
+  ENTRY_REASON_UNSPECIFIED = 0;
+  // Saldo inicial da conta (seed de demonstração).
+  ENTRY_REASON_OPENING = 1;
+  // Dinheiro que entra ou sai do banco pelo SPI.
+  ENTRY_REASON_EXTERNAL = 2;
+  // Estorno de um lançamento EXTERNAL; reverses_entry_id aponta o original.
+  ENTRY_REASON_REVERSAL = 3;
 }
 
 // Sentido de uma perna do lançamento, do ponto de vista da conta do extrato.
@@ -139,6 +164,9 @@ message CreditRequest {
   CreditReason reason = 4;
   // Texto curto para o extrato.
   string description = 5;
+  // Opcional: ID do negócio que originou o lançamento (o transfer_id, no Pix), de 1 a 64
+  // caracteres ASCII visíveis. Não é único; serve para a conciliação.
+  string external_reference = 6;
 }
 
 message CreditResponse {
@@ -154,10 +182,28 @@ message DebitRequest {
   DebitReason reason = 4;
   // Texto curto para o extrato.
   string description = 5;
+  // Opcional: ID do negócio que originou o lançamento (o transfer_id, no Pix), de 1 a 64
+  // caracteres ASCII visíveis. Não é único; serve para a conciliação.
+  string external_reference = 6;
 }
 
 message DebitResponse {
   // Resultado do lançamento; numa repetição pela mesma chave, é o resultado original.
+  Posting posting = 1;
+}
+
+message ReverseRequest {
+  string idempotency_key = 1;
+  // Lançamento a estornar (o entry_id do Posting devolvido pelo Debit).
+  string entry_id = 2;
+  // Opcional, como em CreditRequest.
+  string external_reference = 3;
+  // Texto curto para o extrato.
+  string description = 4;
+}
+
+message ReverseResponse {
+  // A perna da conta de cliente no estorno; numa repetição pela mesma chave, é o resultado original.
   Posting posting = 1;
 }
 
@@ -195,4 +241,9 @@ message Posting {
   int64 balance_after_cents = 5;
   string description = 6;
   google.protobuf.Timestamp posted_at = 7;
+  EntryReason reason = 8;
+  // Vazio se o lançamento não tem referência externa.
+  string external_reference = 9;
+  // Só nos estornos: o lançamento estornado.
+  string reverses_entry_id = 10;
 }

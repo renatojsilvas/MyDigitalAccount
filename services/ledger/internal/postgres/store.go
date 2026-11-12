@@ -115,10 +115,19 @@ func (s *Store) Statement(ctx context.Context, id account.ID, before int64, limi
 		if !r.BalanceAfterCents.Valid {
 			return nil, fmt.Errorf("%w: perna %d de conta de cliente sem saldo", errCorruptRow, r.ID)
 		}
+		reason, err := reasonFromDB(r.Reason)
+		if err != nil {
+			return nil, err
+		}
+		ref, err := referenceFromDB(r.ExternalReference)
+		if err != nil {
+			return nil, err
+		}
 		lines = append(lines, account.StatementLine{Seq: r.ID, Posting: account.Posting{
 			EntryID: account.EntryID(r.EntryID), AccountID: id, Direction: dir,
 			Amount: account.MoneyFromCents(r.AmountCents), BalanceAfter: account.MoneyFromCents(r.BalanceAfterCents.Int64),
 			Description: desc, PostedAt: r.PostedAt,
+			Reason: reason, Reference: ref, ReversesEntryID: entryIDFromDB(r.ReversesEntryID),
 		}})
 	}
 	return lines, nil

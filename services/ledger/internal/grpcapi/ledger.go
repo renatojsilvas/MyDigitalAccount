@@ -15,6 +15,7 @@ type LedgerService interface {
 	OpenAccount(ctx context.Context, cmd account.OpenAccountCommand) (account.Account, error)
 	Credit(ctx context.Context, cmd account.CreditCommand) (account.Posting, error)
 	Debit(ctx context.Context, cmd account.DebitCommand) (account.Posting, error)
+	Reverse(ctx context.Context, cmd account.ReverseCommand) (account.Posting, error)
 	Account(ctx context.Context, id account.ID) (account.Account, error)
 	AccountByDocument(ctx context.Context, doc account.Document) (account.Account, error)
 	Balance(ctx context.Context, id account.ID) (account.Money, error)
@@ -92,9 +93,10 @@ type movementInput struct {
 	id     account.ID
 	amount account.Money
 	desc   account.Description
+	ref    account.ExternalReference
 }
 
-func parseMovement(key, accountID string, amountCents int64, description string) (movementInput, error) {
+func parseMovement(key, accountID string, amountCents int64, description, reference string) (movementInput, error) {
 	k, err := account.NewIdempotencyKey(key)
 	if err != nil {
 		return movementInput{}, err
@@ -111,12 +113,17 @@ func parseMovement(key, accountID string, amountCents int64, description string)
 	if err != nil {
 		return movementInput{}, err
 	}
-	return movementInput{key: k, id: id, amount: amount, desc: desc}, nil
+	ref, err := account.NewExternalReference(reference)
+	if err != nil {
+		return movementInput{}, err
+	}
+	return movementInput{key: k, id: id, amount: amount, desc: desc, ref: ref}, nil
 }
 
 // Credit credita uma conta.
 func (h *LedgerHandler) Credit(ctx context.Context, req *ledgerv1.CreditRequest) (*ledgerv1.CreditResponse, error) {
-	in, err := parseMovement(req.GetIdempotencyKey(), req.GetAccountId(), req.GetAmountCents(), req.GetDescription())
+	in, err := parseMovement(req.GetIdempotencyKey(), req.GetAccountId(), req.GetAmountCents(), req.GetDescription(),
+		req.GetExternalReference())
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +132,7 @@ func (h *LedgerHandler) Credit(ctx context.Context, req *ledgerv1.CreditRequest)
 		return nil, err
 	}
 	p, err := h.svc.Credit(ctx, account.CreditCommand{
-		Key: in.key, AccountID: in.id, Amount: in.amount, Reason: reason, Description: in.desc,
+		Key: in.key, AccountID: in.id, Amount: in.amount, Reason: reason, Description: in.desc, Reference: in.ref,
 	})
 	if err != nil {
 		return nil, err
@@ -135,7 +142,8 @@ func (h *LedgerHandler) Credit(ctx context.Context, req *ledgerv1.CreditRequest)
 
 // Debit debita uma conta.
 func (h *LedgerHandler) Debit(ctx context.Context, req *ledgerv1.DebitRequest) (*ledgerv1.DebitResponse, error) {
-	in, err := parseMovement(req.GetIdempotencyKey(), req.GetAccountId(), req.GetAmountCents(), req.GetDescription())
+	in, err := parseMovement(req.GetIdempotencyKey(), req.GetAccountId(), req.GetAmountCents(), req.GetDescription(),
+		req.GetExternalReference())
 	if err != nil {
 		return nil, err
 	}
@@ -144,12 +152,37 @@ func (h *LedgerHandler) Debit(ctx context.Context, req *ledgerv1.DebitRequest) (
 		return nil, err
 	}
 	p, err := h.svc.Debit(ctx, account.DebitCommand{
-		Key: in.key, AccountID: in.id, Amount: in.amount, Reason: reason, Description: in.desc,
+		Key: in.key, AccountID: in.id, Amount: in.amount, Reason: reason, Description: in.desc, Reference: in.ref,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &ledgerv1.DebitResponse{Posting: postingToProto(p)}, nil
+}
+
+// Reverse estorna um lançamento.
+func (h *LedgerHandler) Reverse(ctx context.Context, req *ledgerv1.ReverseRequest) (*ledgerv1.ReverseResponse, error) {
+	key, err := account.NewIdempotencyKey(req.GetIdempotencyKey())
+	if err != nil {
+		return nil, err
+	}
+	entry, err := account.ParseEntryID(req.GetEntryId())
+	if err != nil {
+		return nil, err
+	}
+	desc, err := account.NewDescription(req.GetDescription())
+	if err != nil {
+		return nil, err
+	}
+	ref, err := account.NewExternalReference(req.GetExternalReference())
+	if err != nil {
+		return nil, err
+	}
+	p, err := h.svc.Reverse(ctx, account.ReverseCommand{Key: key, EntryID: entry, Description: desc, Reference: ref})
+	if err != nil {
+		return nil, err
+	}
+	return &ledgerv1.ReverseResponse{Posting: postingToProto(p)}, nil
 }
 
 // GetBalance devolve o saldo atual.

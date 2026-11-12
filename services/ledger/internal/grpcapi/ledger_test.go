@@ -257,6 +257,9 @@ func (f fakeLedger) Credit(context.Context, account.CreditCommand) (account.Post
 func (f fakeLedger) Debit(context.Context, account.DebitCommand) (account.Posting, error) {
 	return account.Posting{}, f.err
 }
+func (f fakeLedger) Reverse(context.Context, account.ReverseCommand) (account.Posting, error) {
+	return account.Posting{}, f.err
+}
 func (f fakeLedger) Account(context.Context, account.ID) (account.Account, error) {
 	return account.Account{}, f.err
 }
@@ -304,6 +307,24 @@ func TestValidationOverGRPC(t *testing.T) {
 			_, err := c.OpenAccount(ctx, &ledgerv1.OpenAccountRequest{IdempotencyKey: "k", HolderDocument: "11144477735"})
 			return err
 		}, "holder_name"},
+		{"referência externa com espaço", func() error {
+			r := validDebit()
+			r.ExternalReference = "a b"
+			_, err := c.Debit(ctx, r)
+			return err
+		}, "external_reference"},
+		{"estorno sem lançamento válido", func() error {
+			_, err := c.Reverse(ctx, &ledgerv1.ReverseRequest{IdempotencyKey: "k", EntryId: "abc"})
+			return err
+		}, "entry_id"},
+		{"estorno sem chave", func() error {
+			_, err := c.Reverse(ctx, &ledgerv1.ReverseRequest{EntryId: id})
+			return err
+		}, "idempotency_key"},
+		{"estorno com referência longa", func() error {
+			_, err := c.Reverse(ctx, &ledgerv1.ReverseRequest{IdempotencyKey: "k", EntryId: id, ExternalReference: strings.Repeat("r", 65)})
+			return err
+		}, "external_reference"},
 		{"page_token forjado", func() error {
 			_, err := c.ListStatement(ctx, &ledgerv1.ListStatementRequest{AccountId: id, PageToken: "abc"})
 			return err
@@ -331,5 +352,71 @@ func TestInternalErrorIsLoggedNotLeaked(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "pgx: senha do banco no erro") || !strings.Contains(logs.String(), `"code":"Internal"`) {
 		t.Fatalf("a causa e o código deveriam estar no log:\n%s", logs.String())
+	}
+}
+
+// Estorno pela pilha inteira (ADR-0009): motivo e referência no Posting, recusas com
+// ErrorInfo e a repetição pela mesma chave idêntica à original.
+func TestReverseOverGRPC(t *testing.T) {
+	c := realLedger(t)
+	ctx := t.Context()
+	id := openAccount(t, c)
+	credit(t, c, id, 1_000)
+
+	debit, err := c.Debit(ctx, &ledgerv1.DebitRequest{
+		IdempotencyKey: key(), AccountId: id, AmountCents: 300, Reason: ledgerv1.DebitReason_DEBIT_REASON_EXTERNAL,
+		Description: "Pix enviado", ExternalReference: "transfer-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := debit.GetPosting(); p.GetReason() != ledgerv1.EntryReason_ENTRY_REASON_EXTERNAL || p.GetExternalReference() != "transfer-1" ||
+		p.GetReversesEntryId() != "" {
+		t.Fatalf("débito = %v", p)
+	}
+
+	req := &ledgerv1.ReverseRequest{
+		IdempotencyKey: key(), EntryId: debit.GetPosting().GetEntryId(), ExternalReference: "transfer-1", Description: "Estorno",
+	}
+	first, err := c.Reverse(ctx, req)
+	if err != nil {
+		t.Fatalf("Reverse: %v", err)
+	}
+	p := first.GetPosting()
+	if p.GetReason() != ledgerv1.EntryReason_ENTRY_REASON_REVERSAL || p.GetReversesEntryId() != debit.GetPosting().GetEntryId() ||
+		p.GetDirection() != ledgerv1.Direction_DIRECTION_CREDIT || p.GetAmountCents() != 300 || p.GetBalanceAfterCents() != 1_000 {
+		t.Fatalf("estorno = %v", p)
+	}
+	again, err := c.Reverse(ctx, req)
+	if err != nil || !proto.Equal(again, first) {
+		t.Fatalf("repetição = %v, %v; want idêntica", again, err)
+	}
+
+	stmt, err := c.ListStatement(ctx, &ledgerv1.ListStatementRequest{AccountId: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stmt.GetPostings()[0]; got.GetReason() != ledgerv1.EntryReason_ENTRY_REASON_REVERSAL ||
+		got.GetReversesEntryId() != debit.GetPosting().GetEntryId() {
+		t.Fatalf("extrato = %v", got)
+	}
+
+	tests := []struct {
+		name       string
+		entry      string
+		wantCode   codes.Code
+		wantReason string
+	}{
+		{"segundo estorno com outra chave", debit.GetPosting().GetEntryId(), codes.FailedPrecondition, "ERROR_REASON_ENTRY_ALREADY_REVERSED"},
+		{"estorno de um estorno", p.GetEntryId(), codes.FailedPrecondition, "ERROR_REASON_ENTRY_NOT_REVERSIBLE"},
+		{"lançamento inexistente", "0195d1f2-0000-7000-8000-0000000000ff", codes.NotFound, "ERROR_REASON_ENTRY_NOT_FOUND"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.Reverse(ctx, &ledgerv1.ReverseRequest{IdempotencyKey: key(), EntryId: tt.entry})
+			if code, reason, _ := reasonOf(err); code != tt.wantCode || reason != tt.wantReason {
+				t.Fatalf("= %s %s, want %s %s", code, reason, tt.wantCode, tt.wantReason)
+			}
+		})
 	}
 }

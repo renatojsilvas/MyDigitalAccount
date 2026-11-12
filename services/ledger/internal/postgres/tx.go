@@ -74,8 +74,13 @@ func (t *Tx) SaveBalance(ctx context.Context, a account.Account) error {
 // AppendEntry grava o lançamento e as suas pernas. Só a perna da conta de cliente leva o
 // saldo posterior; a partida dobrada é conferida de novo pelo banco no COMMIT.
 func (t *Tx) AppendEntry(ctx context.Context, e account.Entry) error {
-	err := t.q.InsertJournalEntry(ctx, sqlcgen.InsertJournalEntryParams{
+	reason, err := reasonToDB(e.Reason())
+	if err != nil {
+		return err
+	}
+	err = t.q.InsertJournalEntry(ctx, sqlcgen.InsertJournalEntryParams{
 		ID: uuid.UUID(e.ID()), Description: e.Description().String(), PostedAt: e.PostedAt(),
+		Reason: reason, ExternalReference: referenceToDB(e.Reference()), ReversesEntryID: entryIDToDB(e.Reverses()),
 	})
 	if err != nil {
 		return classify(fmt.Errorf("postgres: gravando lançamento %s: %w", e.ID(), err))
@@ -99,6 +104,47 @@ func (t *Tx) AppendEntry(ctx context.Context, e account.Entry) error {
 		}
 	}
 	return nil
+}
+
+// StoredEntry lê o lançamento e as suas pernas. ErrEntryNotFound se não existir.
+func (t *Tx) StoredEntry(ctx context.Context, id account.EntryID) (account.StoredEntry, error) {
+	rows, err := t.q.GetEntryLegs(ctx, uuid.UUID(id))
+	if err != nil {
+		return account.StoredEntry{}, classify(fmt.Errorf("postgres: lendo lançamento %s: %w", id, err))
+	}
+	if len(rows) == 0 {
+		return account.StoredEntry{}, account.ErrEntryNotFound
+	}
+	reason, err := reasonFromDB(rows[0].Reason)
+	if err != nil {
+		return account.StoredEntry{}, err
+	}
+	e := account.StoredEntry{ID: id, Reason: reason, Legs: make([]account.Leg, 0, len(rows))}
+	for _, r := range rows {
+		dir, err := directionFromDB(r.Direction)
+		if err != nil {
+			return account.StoredEntry{}, err
+		}
+		if r.Customer {
+			if e.CustomerAccountID != (account.ID{}) {
+				return account.StoredEntry{}, fmt.Errorf("%w: lançamento %s com duas contas de cliente", errCorruptRow, id)
+			}
+			e.CustomerAccountID = account.ID(r.AccountID)
+		}
+		e.Legs = append(e.Legs, account.Leg{
+			AccountID: account.ID(r.AccountID), Direction: dir, Amount: account.MoneyFromCents(r.AmountCents),
+		})
+	}
+	return e, nil
+}
+
+// EntryReversed diz se o lançamento já tem um estorno gravado.
+func (t *Tx) EntryReversed(ctx context.Context, id account.EntryID) (bool, error) {
+	reversed, err := t.q.EntryIsReversed(ctx, uuid.UUID(id))
+	if err != nil {
+		return false, classify(fmt.Errorf("postgres: procurando estorno de %s: %w", id, err))
+	}
+	return reversed, nil
 }
 
 // ClaimKey reserva a chave de idempotência; deve ser o primeiro comando da transação.

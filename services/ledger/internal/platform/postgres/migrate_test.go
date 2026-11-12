@@ -3,7 +3,9 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -117,7 +119,7 @@ func inTx(ctx context.Context, app *pgxpool.Pool, stmts ...string) error {
 
 func TestDatabaseEnforcesDoubleEntry(t *testing.T) {
 	const (
-		entry = `INSERT INTO journal_entries (id, description, posted_at) VALUES ('` + entry1 + `', 't', now())`
+		entry = `INSERT INTO journal_entries (id, description, posted_at, reason) VALUES ('` + entry1 + `', 't', now(), 'external')`
 		debit = `INSERT INTO postings (entry_id, account_id, direction, amount_cents, balance_after_cents)
 			VALUES ('` + entry1 + `', '` + customerA + `', 'debit', 100, 0)`
 		credit = `INSERT INTO postings (entry_id, account_id, direction, amount_cents)
@@ -213,7 +215,7 @@ func TestServiceRolePrivileges(t *testing.T) {
 	app := migrated(t)
 	insertCustomer(t, app, 100)
 	if err := inTx(t.Context(), app,
-		`INSERT INTO journal_entries (id, description, posted_at) VALUES ('`+entry1+`', 't', now())`,
+		`INSERT INTO journal_entries (id, description, posted_at, reason) VALUES ('`+entry1+`', 't', now(), 'external')`,
 		`INSERT INTO postings (entry_id, account_id, direction, amount_cents, balance_after_cents)
 			VALUES ('`+entry1+`', '`+customerA+`', 'debit', 100, 0)`,
 		`INSERT INTO postings (entry_id, account_id, direction, amount_cents)
@@ -275,6 +277,156 @@ func TestIdempotencyRowIsCompleteOrPending(t *testing.T) {
 			_, err := app.Exec(ctx, tt.sql, tt.hash)
 			if pgErr := pgError(t, err); pgErr.Code != codeCheckViolation {
 				t.Fatalf("err = %s %s, want check_violation", pgErr.Code, pgErr.Message)
+			}
+		})
+	}
+}
+
+// TestMigration2BackfillsReason aplica só a 00001, grava lançamentos no formato antigo e
+// então aplica o resto: o motivo sai da contrapartida (ADR-0009, seção 2).
+func TestMigration2BackfillsReason(t *testing.T) {
+	db := testpg.New(t)
+	db.EnsureRole(t, pgtest.AppRole, pgtest.AppPassword)
+	cfg := fromTestDB(db)
+
+	first, err := fs.ReadFile(migrations.FS, "00001_ledger_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Migrate(t.Context(), cfg, fstest.MapFS{"00001_ledger_schema.sql": {Data: first}}); err != nil {
+		t.Fatalf("aplicando só a 00001: %v", err)
+	}
+
+	admin := db.Pool // superusuário de teste: grava como faria o serviço antes da 00002
+	const (
+		opening  = "0195d1f2-0000-7000-8000-0000000000f1"
+		external = "0195d1f2-0000-7000-8000-0000000000f2"
+	)
+	if err := inTx(t.Context(), admin,
+		`INSERT INTO accounts (id, kind, holder_name, holder_document, status, balance_cents, created_at)
+			VALUES ('`+customerA+`', 'customer', 'Teste', '11144477735', 'active', 60, now())`,
+		`INSERT INTO journal_entries (id, description, posted_at) VALUES ('`+opening+`', 'saldo', now())`,
+		`INSERT INTO postings (entry_id, account_id, direction, amount_cents) VALUES
+			('`+opening+`', '00000000-0000-0000-0000-000000000001', 'debit', 100)`,
+		`INSERT INTO postings (entry_id, account_id, direction, amount_cents, balance_after_cents) VALUES
+			('`+opening+`', '`+customerA+`', 'credit', 100, 100)`,
+		`INSERT INTO journal_entries (id, description, posted_at) VALUES ('`+external+`', 'pix', now())`,
+		`INSERT INTO postings (entry_id, account_id, direction, amount_cents, balance_after_cents) VALUES
+			('`+external+`', '`+customerA+`', 'debit', 40, 60)`,
+		`INSERT INTO postings (entry_id, account_id, direction, amount_cents) VALUES
+			('`+external+`', '`+settlement+`', 'credit', 40)`,
+	); err != nil {
+		t.Fatalf("gravando lançamentos antigos: %v", err)
+	}
+
+	applied, err := postgres.Migrate(t.Context(), cfg, migrations.FS)
+	if err != nil {
+		t.Fatalf("aplicando o resto: %v", err)
+	}
+	if len(applied) == 0 || applied[0].Version != 2 {
+		t.Fatalf("aplicou %+v, want a partir da versão 2", applied)
+	}
+
+	got := map[string]string{}
+	rows, err := admin.Query(t.Context(), "SELECT id::text, reason FROM journal_entries")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, reason string
+		if err := rows.Scan(&id, &reason); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = reason
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got[opening] != "opening" || got[external] != "external" || len(got) != 2 {
+		t.Fatalf("motivos = %v, want opening e external", got)
+	}
+}
+
+func TestDatabaseGuardsReversals(t *testing.T) {
+	const (
+		reversal1 = "0195d1f2-0000-7000-8000-0000000000e2"
+		reversal2 = "0195d1f2-0000-7000-8000-0000000000e3"
+	)
+	original := []string{
+		`INSERT INTO journal_entries (id, description, posted_at, reason, external_reference)
+			VALUES ('` + entry1 + `', 'pix', now(), 'external', 'transfer-1')`,
+		`INSERT INTO postings (entry_id, account_id, direction, amount_cents, balance_after_cents)
+			VALUES ('` + entry1 + `', '` + customerA + `', 'debit', 100, 0)`,
+		`INSERT INTO postings (entry_id, account_id, direction, amount_cents)
+			VALUES ('` + entry1 + `', '` + settlement + `', 'credit', 100)`,
+	}
+	reversal := func(id, target string) []string {
+		return []string{
+			`INSERT INTO journal_entries (id, description, posted_at, reason, reverses_entry_id)
+				VALUES ('` + id + `', 'estorno', now(), 'reversal', ` + target + `)`,
+			`INSERT INTO postings (entry_id, account_id, direction, amount_cents)
+				VALUES ('` + id + `', '` + settlement + `', 'debit', 100)`,
+			`INSERT INTO postings (entry_id, account_id, direction, amount_cents, balance_after_cents)
+				VALUES ('` + id + `', '` + customerA + `', 'credit', 100, 100)`,
+		}
+	}
+
+	tests := []struct {
+		name       string
+		stmts      [][]string // cada item numa transação; só a última pode falhar
+		constraint string     // vazio = deve passar
+		code       string
+	}{
+		{name: "estorno que aponta o original", stmts: [][]string{original, reversal(reversal1, "'"+entry1+"'")}},
+		{
+			name:  "segundo estorno do mesmo lançamento",
+			stmts: [][]string{original, reversal(reversal1, "'"+entry1+"'"), reversal(reversal2, "'"+entry1+"'")},
+			code:  "23505", constraint: "journal_entries_reverses_entry_id_key",
+		},
+		{
+			name:  "estorno sem apontar o original",
+			stmts: [][]string{original, reversal(reversal1, "NULL")},
+			code:  codeCheckViolation, constraint: "journal_entries_reversal_target",
+		},
+		{
+			name: "lançamento comum apontando um original",
+			stmts: [][]string{original, {`INSERT INTO journal_entries (id, description, posted_at, reason, reverses_entry_id)
+				VALUES ('` + reversal1 + `', 'x', now(), 'external', '` + entry1 + `')`}},
+			code: codeCheckViolation, constraint: "journal_entries_reversal_target",
+		},
+		{
+			name: "motivo desconhecido",
+			stmts: [][]string{{`INSERT INTO journal_entries (id, description, posted_at, reason)
+				VALUES ('` + entry1 + `', 'x', now(), 'gift')`}},
+			code: codeCheckViolation, constraint: "journal_entries_reason",
+		},
+		{
+			name: "referência externa com espaço",
+			stmts: [][]string{{`INSERT INTO journal_entries (id, description, posted_at, reason, external_reference)
+				VALUES ('` + entry1 + `', 'x', now(), 'external', 'a b')`}},
+			code: codeCheckViolation, constraint: "journal_entries_external_reference_check",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := migrated(t)
+			insertCustomer(t, app, 100)
+			var err error
+			for i, stmts := range tt.stmts {
+				err = inTx(t.Context(), app, stmts...)
+				if err != nil && i < len(tt.stmts)-1 {
+					t.Fatalf("transação %d: %v", i, err)
+				}
+			}
+			if tt.constraint == "" {
+				if err != nil {
+					t.Fatalf("err = %v, want commit", err)
+				}
+				return
+			}
+			pgErr := pgError(t, err)
+			if pgErr.Code != tt.code || pgErr.ConstraintName != tt.constraint {
+				t.Fatalf("err = %s (%s), want %s em %s", pgErr.Code, pgErr.ConstraintName, tt.code, tt.constraint)
 			}
 		})
 	}

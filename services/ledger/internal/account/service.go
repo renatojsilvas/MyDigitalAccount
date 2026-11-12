@@ -77,15 +77,17 @@ type CreditCommand struct {
 	Amount      Money
 	Reason      CreditReason
 	Description Description
+	Reference   ExternalReference
 }
 
 // Credit credita a conta e devolve a perna do cliente no lançamento.
 func (s *Service) Credit(ctx context.Context, cmd CreditCommand) (Posting, error) {
-	hash := requestHash(cmd.AccountID.String(), strconv.FormatInt(cmd.Amount.Cents(), 10),
-		strconv.Itoa(int(cmd.Reason)), cmd.Description.String())
+	hash := requestHash(withReference(cmd.Reference, cmd.AccountID.String(), strconv.FormatInt(cmd.Amount.Cents(), 10),
+		strconv.Itoa(int(cmd.Reason)), cmd.Description.String())...)
+	in := movementInput{amount: cmd.Amount, desc: cmd.Description, ref: cmd.Reference}
 	p, outcome, err := idempotent(ctx, s, scopeCredit, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
 		func(tx Tx) (Posting, error) {
-			return s.post(ctx, tx, cmd.AccountID, cmd.Amount, cmd.Description, func(a *Account, m Movement) (Entry, error) {
+			return s.post(ctx, tx, cmd.AccountID, in, func(a *Account, m Movement) (Entry, error) {
 				return a.Credit(m, cmd.Reason)
 			})
 		})
@@ -102,16 +104,18 @@ type DebitCommand struct {
 	Amount      Money
 	Reason      DebitReason
 	Description Description
+	Reference   ExternalReference
 }
 
 // Debit debita a conta e devolve a perna do cliente no lançamento. ErrInsufficientFunds se
 // o saldo não cobre o valor: a recusa é gravada e repetida pela mesma chave.
 func (s *Service) Debit(ctx context.Context, cmd DebitCommand) (Posting, error) {
-	hash := requestHash(cmd.AccountID.String(), strconv.FormatInt(cmd.Amount.Cents(), 10),
-		strconv.Itoa(int(cmd.Reason)), cmd.Description.String())
+	hash := requestHash(withReference(cmd.Reference, cmd.AccountID.String(), strconv.FormatInt(cmd.Amount.Cents(), 10),
+		strconv.Itoa(int(cmd.Reason)), cmd.Description.String())...)
+	in := movementInput{amount: cmd.Amount, desc: cmd.Description, ref: cmd.Reference}
 	p, outcome, err := idempotent(ctx, s, scopeDebit, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
 		func(tx Tx) (Posting, error) {
-			return s.post(ctx, tx, cmd.AccountID, cmd.Amount, cmd.Description, func(a *Account, m Movement) (Entry, error) {
+			return s.post(ctx, tx, cmd.AccountID, in, func(a *Account, m Movement) (Entry, error) {
 				return a.Debit(m, cmd.Reason)
 			})
 		})
@@ -121,10 +125,62 @@ func (s *Service) Debit(ctx context.Context, cmd DebitCommand) (Posting, error) 
 	return p, err
 }
 
+// ReverseCommand é o pedido de estorno, já validado.
+type ReverseCommand struct {
+	Key         IdempotencyKey
+	EntryID     EntryID
+	Description Description
+	Reference   ExternalReference
+}
+
+// Reverse estorna um lançamento (ADR-0009) e devolve a perna do cliente no estorno.
+// ErrEntryNotFound, ErrEntryNotReversible e ErrEntryAlreadyReversed são recusas gravadas.
+//
+// O estorno duplo é barrado em três camadas: a chave de idempotência; a checagem abaixo, feita
+// depois de travar a conta de cliente (todo estorno de um lançamento dela passa pelo mesmo
+// lock, então não há corrida); e o UNIQUE de reverses_entry_id no banco.
+func (s *Service) Reverse(ctx context.Context, cmd ReverseCommand) (Posting, error) {
+	hash := requestHash(withReference(cmd.Reference, cmd.EntryID.String(), cmd.Description.String())...)
+	var original StoredEntry
+	p, outcome, err := idempotent(ctx, s, scopeReverse, cmd.Key, hash, s.codec.EncodePosting, s.codec.DecodePosting,
+		func(tx Tx) (Posting, error) {
+			var err error
+			original, err = tx.StoredEntry(ctx, cmd.EntryID)
+			if err != nil {
+				return Posting{}, err
+			}
+			if original.CustomerAccountID == (ID{}) {
+				return Posting{}, ErrEntryNotReversible
+			}
+			in := movementInput{desc: cmd.Description, ref: cmd.Reference}
+			return s.post(ctx, tx, original.CustomerAccountID, in, func(a *Account, m Movement) (Entry, error) {
+				reversed, err := tx.EntryReversed(ctx, original.ID)
+				if err != nil {
+					return Entry{}, err
+				}
+				if reversed {
+					return Entry{}, ErrEntryAlreadyReversed
+				}
+				return a.Reverse(m, original)
+			})
+		})
+	s.finish(ctx, WriteEvent{
+		Operation: scopeReverse, Reason: ReasonReversal.String(), Amount: p.Amount, AccountID: original.CustomerAccountID,
+	}, outcome, err)
+	return p, err
+}
+
+// movementInput são os dados do pedido que entram no Movement.
+type movementInput struct {
+	amount Money
+	desc   Description
+	ref    ExternalReference
+}
+
 // post é o lançamento sob lock pessimista (ADR-0004, seção 2): trava a conta, deixa o
 // domínio decidir e grava lançamento e saldo na mesma transação.
 func (s *Service) post(
-	ctx context.Context, tx Tx, id ID, amount Money, desc Description,
+	ctx context.Context, tx Tx, id ID, in movementInput,
 	apply func(*Account, Movement) (Entry, error),
 ) (Posting, error) {
 	a, err := tx.LockAccount(ctx, id)
@@ -135,7 +191,9 @@ func (s *Service) post(
 	if err != nil {
 		return Posting{}, err
 	}
-	e, err := apply(&a, Movement{EntryID: entryID, Amount: amount, Description: desc, PostedAt: s.instant()})
+	e, err := apply(&a, Movement{
+		EntryID: entryID, Amount: in.amount, Description: in.desc, PostedAt: s.instant(), Reference: in.ref,
+	})
 	if err != nil {
 		return Posting{}, err
 	}

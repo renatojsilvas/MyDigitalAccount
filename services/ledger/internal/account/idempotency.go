@@ -16,6 +16,7 @@ const (
 	scopeOpenAccount = "open_account"
 	scopeCredit      = "credit"
 	scopeDebit       = "debit"
+	scopeReverse     = "reverse"
 )
 
 // IdempotencyKey é a chave vinda do cliente: de 1 a 128 caracteres ASCII visíveis.
@@ -48,6 +49,20 @@ func (k IdempotencyKey) String() string {
 // frente, para que ("ab", "c") e ("a", "bc") não deem o mesmo hash. O hash é feito sobre os
 // valores do domínio, e não sobre os bytes do Protobuf, que não têm serialização canônica.
 func requestHash(fields ...string) []byte {
+	return hashFields(fields)
+}
+
+// withReference acrescenta a referência externa aos campos do hash só quando ela foi
+// informada: assim o hash de um pedido sem referência é o mesmo de antes de o campo existir,
+// e uma repetição feita antes da atualização não vira chave reutilizada (ADR-0009, seção 3).
+func withReference(ref ExternalReference, fields ...string) []string {
+	if ref.IsZero() {
+		return fields
+	}
+	return append(fields, "external_reference", ref.String())
+}
+
+func hashFields(fields []string) []byte {
 	h := sha256.New()
 	var size [4]byte
 	for _, f := range fields {

@@ -76,10 +76,25 @@ func (Codec) DecodePosting(b []byte) (account.Posting, error) {
 	if err != nil {
 		return account.Posting{}, err
 	}
+	reason, err := entryReasonFromProto(m.GetReason())
+	if err != nil {
+		return account.Posting{}, err
+	}
+	ref, err := account.NewExternalReference(m.GetExternalReference())
+	if err != nil {
+		return account.Posting{}, err
+	}
+	var reverses account.EntryID
+	if s := m.GetReversesEntryId(); s != "" {
+		if reverses, err = account.ParseEntryID(s); err != nil {
+			return account.Posting{}, err
+		}
+	}
 	return account.Posting{
 		EntryID: account.EntryID(entry), AccountID: id, Direction: dir,
 		Amount: account.MoneyFromCents(m.GetAmountCents()), BalanceAfter: account.MoneyFromCents(m.GetBalanceAfterCents()),
 		Description: desc, PostedAt: m.GetPostedAt().AsTime(),
+		Reason: reason, Reference: ref, ReversesEntryID: reverses,
 	}, nil
 }
 
