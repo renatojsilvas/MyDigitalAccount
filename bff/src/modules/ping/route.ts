@@ -1,5 +1,6 @@
 import { ROOT_CONTEXT } from "@opentelemetry/api";
 import type { FastifyPluginCallbackZod } from "fastify-type-provider-zod";
+import { problemResponses } from "../../problem-schema.js";
 import { replyWithProblem } from "../../plugins/errors.js";
 import { pingQuerySchema, pingResponseSchema } from "./schema.js";
 import type { PingService } from "./service.js";
@@ -11,7 +12,14 @@ export interface PingRouteOptions {
 export const pingRoutes: FastifyPluginCallbackZod<PingRouteOptions> = (app, opts, done) => {
   app.get(
     "/ping",
-    { schema: { querystring: pingQuerySchema, response: { 200: pingResponseSchema } } },
+    {
+      schema: {
+        summary: "Eco pelo ledger (diagnóstico)",
+        tags: ["diagnostics"],
+        querystring: pingQuerySchema,
+        response: { 200: pingResponseSchema, ...problemResponses },
+      },
+    },
     async (request, reply) => {
       const result = await opts.service.ping(
         request.query.message,

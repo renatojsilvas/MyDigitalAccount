@@ -14,8 +14,10 @@ export interface HealthOptions {
  */
 export const healthPlugin = fp<HealthOptions>(
   (app, opts, done) => {
-    app.get("/healthz", () => ({ status: "ok" }));
-    app.get("/readyz", (_request, reply) => {
+    // Sondas de infraestrutura: fora do contrato com o front (hide: true).
+    const hidden = { schema: { hide: true } };
+    app.get("/healthz", hidden, () => ({ status: "ok" }));
+    app.get("/readyz", hidden, (_request, reply) => {
       if (!opts.lifecycle.isReady()) {
         return reply.status(503).send({ status: "shutting_down" });
       }

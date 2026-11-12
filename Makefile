@@ -26,6 +26,7 @@ generate:
 	buf generate --template buf.gen.ts.yaml
 	cd gen/go && go mod tidy && go build ./...
 	pnpm --filter @conta/contracts build
+	pnpm --filter @conta/bff run openapi ../gen/openapi/bff.json
 	@for f in $(SQLC_CONFIGS); do echo "==> sqlc generate $$f"; sqlc generate -f $$f || exit 1; done
 
 # Apaga o código gerado. Pare os serviços de desenvolvimento antes, ou reinicie-os depois.

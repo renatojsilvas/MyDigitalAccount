@@ -25,6 +25,7 @@ import { createTelemetry, type Telemetry, type TelemetryOverrides } from "./plat
 import { authPlugin } from "./plugins/auth.js";
 import { errorsPlugin } from "./plugins/errors.js";
 import { healthPlugin } from "./plugins/health.js";
+import { openapiPlugin } from "./plugins/openapi.js";
 import { telemetryPlugin } from "./plugins/telemetry.js";
 
 export const SERVICE_NAME = "bff";
@@ -108,6 +109,8 @@ export function buildApp(config: Config, overrides: AppOverrides = {}): BuiltApp
     propagator: telemetry.propagator,
     ignorePaths: new Set(["/healthz", "/readyz"]),
   });
+  // Antes das rotas: o swagger as coleta no hook onRoute.
+  void app.register(openapiPlugin, { version: config.serviceVersion });
   void app.register(errorsPlugin);
   void app.register(authPlugin, {
     secret: config.jwtSecret,
