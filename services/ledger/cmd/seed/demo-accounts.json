@@ -1,0 +1,6 @@
+[
+  { "holder_name": "Ana Demonstração",    "holder_document": "12345678909", "opening_balance_cents": 500000 },
+  { "holder_name": "Bruno Demonstração",  "holder_document": "98765432100", "opening_balance_cents": 150000 },
+  { "holder_name": "Carla Demonstração",  "holder_document": "11144477735", "opening_balance_cents": 25000 },
+  { "holder_name": "Diego Demonstração",  "holder_document": "00000000191", "opening_balance_cents": 0 }
+]

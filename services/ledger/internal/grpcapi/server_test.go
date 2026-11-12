@@ -123,15 +123,21 @@ func TestPingEmitsTraceLogAndMetric(t *testing.T) {
 	}
 
 	// Trace: há um span de servidor e um de cliente, no mesmo trace (traceparent propagado).
+	// O span e a métrica do servidor são fechados no fim do RPC (stats handler), que pode
+	// acontecer logo depois de o cliente receber a resposta: espera, com prazo, em vez de ler
+	// na hora.
 	var server, client tracetest.SpanStub
-	for _, s := range h.spans.GetSpans() {
-		switch s.SpanKind.String() {
-		case "server":
-			server = s
-		case "client":
-			client = s
+	eventually(t, "spans de servidor e de cliente", func() bool {
+		for _, s := range h.spans.GetSpans() {
+			switch s.SpanKind.String() {
+			case "server":
+				server = s
+			case "client":
+				client = s
+			}
 		}
-	}
+		return server.Name != "" && client.Name != ""
+	})
 	if server.Name != "conta.ping.v1.PingService/Ping" {
 		t.Fatalf("span de servidor ausente ou com nome inesperado: %q", server.Name)
 	}
@@ -171,21 +177,24 @@ func TestPingEmitsTraceLogAndMetric(t *testing.T) {
 	}
 
 	// Métricas: a duração do RPC de servidor foi registrada (método RED).
-	var rm metricdata.ResourceMetrics
-	if err := h.reader.Collect(t.Context(), &rm); err != nil {
-		t.Fatal(err)
-	}
 	names := map[string]bool{}
-	for _, sm := range rm.ScopeMetrics {
-		for _, m := range sm.Metrics {
-			names[m.Name] = true
-		}
-	}
 	var hasRPC, hasRuntime bool
-	for n := range names {
-		hasRPC = hasRPC || strings.HasPrefix(n, "rpc.server.")
-		hasRuntime = hasRuntime || strings.HasPrefix(n, "go.")
-	}
+	eventually(t, "métrica rpc.server.*", func() bool {
+		var rm metricdata.ResourceMetrics
+		if err := h.reader.Collect(t.Context(), &rm); err != nil {
+			t.Fatal(err)
+		}
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				names[m.Name] = true
+			}
+		}
+		for n := range names {
+			hasRPC = hasRPC || strings.HasPrefix(n, "rpc.server.")
+			hasRuntime = hasRuntime || strings.HasPrefix(n, "go.")
+		}
+		return hasRPC
+	})
 	if !hasRPC {
 		t.Errorf("métrica rpc.server.* ausente: %v", names)
 	}
@@ -243,5 +252,19 @@ func TestServeGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Serve não encerrou após cancelar o contexto")
+	}
+}
+
+// eventually espera cond ficar verdadeira, conferindo a cada 10ms, por até 2s. Para efeitos
+// assíncronos (span e métrica fechados depois da resposta), sem sleep fixo no teste.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Errorf("%s: não aconteceu em 2s", what)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
