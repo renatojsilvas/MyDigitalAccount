@@ -1,0 +1,28 @@
+# Testes de carga (k6). Incluído pelo compose.yaml da raiz. Autocontido: não depende de
+# serviço de outro arquivo; o ledger é alcançado pela rede do projeto (ledger:50051).
+#
+# Rodar:  docker compose --profile core up -d --wait ledger
+#         docker compose --profile load run --rm k6
+# Saída:  resumo no terminal e em load/results/ledger-baseline.json (fora do Git).
+# Código de saída 99 = algum threshold falhou (é o que quebra o CI).
+
+services:
+  k6:
+    profiles: ["load"]
+    # Tag + digest (índice multiarquitetura): a mesma imagem no Mac (arm64) e no CI (amd64).
+    image: grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
+    # UID do dono do código, para o resumo em load/results não ficar com dono estranho no host.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      LEDGER_TARGET: ledger:50051
+      # O k6 envia estatísticas de uso anônimas por padrão; aqui nada sai da máquina.
+      K6_NO_USAGE_REPORT: "true"
+      # Permite variar a carga sem editar o roteiro (ex.: RATE=80 docker compose ... run k6).
+      RATE: ${RATE:-40}
+      DURATION: ${DURATION:-30s}
+    volumes:
+      - ./load:/scripts:ro
+      - ./proto:/proto:ro
+      - ./load/results:/results
+    working_dir: /scripts
+    command: ["run", "--summary-export=/results/ledger-baseline.json", "/scripts/ledger-baseline.js"]

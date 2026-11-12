@@ -105,6 +105,56 @@ jobs:
         if: always()
         run: docker compose --profile '*' down -v
 
+  load-baseline:
+    name: Gate de desempenho (k6, linha de base do ledger)
+    # Gatilho "gate de desempenho" da seção 7.4 do plano: thresholds do k6 quebram o CI.
+    # Só Postgres e ledger (sem a stack de observabilidade, que distorce a cauda: load/README.md).
+    if: github.event_name != 'schedule'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Preparar o ambiente (.env)
+        run: |
+          cp .env.example .env
+          sed -i "s/^HOST_UID=.*/HOST_UID=$(id -u)/; s/^HOST_GID=.*/HOST_GID=$(id -g)/" .env
+
+      - name: Gerar o código dos contratos e das queries
+        run: docker compose run --rm tools make generate
+
+      - name: Subir o ledger (e o Postgres, com as migrations)
+        run: docker compose --profile core up -d --build --wait --wait-timeout 300 ledger
+
+      # Código de saída 99 = algum threshold falhou.
+      - name: k6 (linha de base)
+        run: docker compose --profile load run --rm k6
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: k6-ledger-baseline
+          path: load/results/ledger-baseline.json
+          retention-days: 30
+
+      - name: Logs dos contêineres (se algo falhou)
+        if: failure()
+        run: docker compose --profile '*' logs --no-color > compose-logs.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: compose-logs-load
+          path: compose-logs.txt
+          retention-days: 7
+
+      - name: Derrubar tudo
+        if: always()
+        run: docker compose --profile '*' down -v
+
   vuln:
     name: Vulnerabilidades (govulncheck)
     # Só agendado ou manual: uma vulnerabilidade nova no banco não deve quebrar um PR que não a causou.
