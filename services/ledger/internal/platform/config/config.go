@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strconv"
 	"time"
+
+	"conta.local/platform/pg"
 )
 
 // Config é a configuração já validada do serviço.
@@ -21,22 +23,9 @@ type Config struct {
 	Postgres        Postgres
 }
 
-// Postgres é o endereço e as credenciais do banco do ledger (um banco por serviço).
-// A senha nunca deve ir para log. O serviço usa o papel ledger_app (só DML); o subcomando
+// Postgres é o banco do ledger. O serviço usa o papel ledger_app (só DML); o subcomando
 // `ledger migrate` recebe, pelas mesmas variáveis, o papel ledger_owner (ADR-0004).
-type Postgres struct {
-	Host     string
-	Port     uint16
-	User     string
-	Password string
-	Database string
-	// LockTimeout limita a espera por um lock de linha (a conta travada por outro débito).
-	// Estourado, o Postgres cancela o comando e o cliente pode repetir com a mesma chave.
-	LockTimeout time.Duration
-	// MaxConns é o tamanho máximo do pool. Explícito para a utilização do pool (conexões em uso
-	// / máximo, o U do método USE) ter um denominador conhecido.
-	MaxConns int32
-}
+type Postgres = pg.Config
 
 // Lookup tem a assinatura de os.LookupEnv. Receber a função, em vez de ler o ambiente
 // direto, deixa os testes sem estado global.

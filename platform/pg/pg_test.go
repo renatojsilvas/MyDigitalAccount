@@ -1,17 +1,16 @@
-package postgres_test
+package pg_test
 
 import (
 	"net"
 	"strings"
 	"testing"
 
-	"conta.local/ledger/internal/platform/config"
-	"conta.local/ledger/internal/platform/postgres"
+	"conta.local/platform/pg"
 	"conta.local/testkit/testpg"
 )
 
-func fromTestDB(db *testpg.Database) config.Postgres {
-	return config.Postgres{
+func fromTestDB(db *testpg.Database) pg.Config {
+	return pg.Config{
 		Host: db.Config.Host, Port: db.Config.Port, User: db.Config.User,
 		Password: db.Config.Password, Database: db.Name,
 	}
@@ -39,7 +38,7 @@ func TestOpen(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		cfg     config.Postgres
+		cfg     pg.Config
 		wantErr bool
 	}{
 		{"banco acessível", good, false},
@@ -49,7 +48,7 @@ func TestOpen(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pool, err := postgres.Open(t.Context(), tt.cfg)
+			pool, err := pg.Open(t.Context(), tt.cfg)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("erro = %v, esperado erro = %v", err, tt.wantErr)
 			}

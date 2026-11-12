@@ -1,4 +1,4 @@
-package postgres_test
+package pg_test
 
 import (
 	"context"
@@ -10,8 +10,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"conta.local/ledger/internal/platform/postgres"
-	"conta.local/ledger/internal/platform/postgres/pgtest"
+	"conta.local/platform/pg"
 	"conta.local/testkit/testpg"
 )
 
@@ -24,16 +23,16 @@ func TestPoolTelemetry(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
-	cfg := pgtest.Config(db)
+	cfg := fromTestDB(db)
 	cfg.MaxConns = 3
-	pool, err := postgres.Open(t.Context(), cfg, postgres.WithTelemetry(tp, mp))
+	pool, err := pg.Open(t.Context(), cfg, pg.WithTelemetry(tp, mp))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
 	spans.Reset() // conexões abertas no boot
 
-	if err := postgres.Ping(t.Context(), pool); err != nil {
+	if err := pg.Ping(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(spans.GetSpans()); n != 0 {

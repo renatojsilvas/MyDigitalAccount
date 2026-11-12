@@ -205,6 +205,9 @@ mistura duas convenções no mesmo serviço e faz cada cliente reimplementar o q
 - O script de init (`deploy/postgres/init/01-ledger.sh`) cria `ledger_owner` e `ledger_app`, cria o banco `ledger` com
   dono `ledger_owner` e tira o `CONNECT` de `PUBLIC`. Senhas em `LEDGER_DB_OWNER_PASSWORD` e `LEDGER_DB_APP_PASSWORD`.
   O serviço lê as suas em `LEDGER_DB_USER` e `LEDGER_DB_PASSWORD`; `POSTGRES_USER` é só o superusuário.
+  **Atualização (Fase 3)**: o script de init deu lugar ao job idempotente `postgres-bootstrap`
+  (`deploy/postgres/bootstrap.sh`), que provisiona banco e papéis de todos os serviços a cada `up`, inclusive num
+  volume já existente; trocar uma senha no `.env` passa a valer no `up` seguinte, sem recriar o volume.
 - Privilégios concedidos **tabela a tabela na própria migration**: `SELECT` e `INSERT` em `journal_entries` e
   `postings` (append-only também por privilégio), `UPDATE` só da coluna `balance_cents` em `accounts`, e só de
   `status_code` e `body` em `idempotency_keys`. Nada de `DELETE`, `TRUNCATE` ou DDL. Um teste de integração tenta cada

@@ -1,0 +1,24 @@
+# Recarga automática do spi-fake em desenvolvimento (imagem tools, alvo dev do Dockerfile).
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/spi-fake ./cmd/spi-fake"
+  bin = "./tmp/spi-fake"
+  include_ext = ["go"]
+  # Também observa o código gerado do .proto e o módulo platform (fora do diretório do
+  # serviço): ao mudarem, o spi-fake recompila sozinho.
+  include_dir = [".", "../../gen/go", "../../platform"]
+  exclude_dir = ["tmp"]
+  exclude_regex = ["_test\\.go$"]
+  delay = 500
+  stop_on_error = true
+  # SIGINT em vez de SIGKILL: o serviço faz graceful shutdown.
+  send_interrupt = true
+  kill_delay = "5s"
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

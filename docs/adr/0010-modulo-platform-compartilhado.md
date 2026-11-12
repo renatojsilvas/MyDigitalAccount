@@ -24,9 +24,10 @@ Um módulo Go próprio, `platform/` (`conta.local/platform`), no `go.work`, ao l
 | `platform/grpcserver` | servidor gRPC (otelgrpc, log por chamada, recuperação de panic), `Serve` com parada graciosa, `PingService` |
 | `platform/admin` | `/healthz` e `/readyz` numa porta HTTP separada |
 | `platform/healthcheck` | `Probe`, a sonda do `HEALTHCHECK` das imagens finais |
+| `platform/pg` | pool do Postgres com `otelpgx` (spans e métricas do pool), `Ping` sem trace, `Migrate` (goose embutido) |
 
 **O que não vai para a plataforma**: domínio, configuração (cada serviço tem as suas variáveis, em
-`internal/platform/config`), acesso a banco e a tradução de erros de domínio para status gRPC, que entra no servidor
+`internal/platform/config`), queries e schema de cada banco (sqlc, migrations, testes de schema) e a tradução de erros de domínio para status gRPC, que entra no servidor
 como interceptor (`ServerOptions.Interceptors`, entre o log e a recuperação de panic).
 
 | | **Módulo compartilhado** (escolhido) | Cópia por serviço |
@@ -34,6 +35,10 @@ como interceptor (`ServerOptions.Interceptors`, entre o log e a recuperação de
 | Correção (por exemplo, na propagação do trace) | Um lugar | Quatro lugares, com risco de divergir |
 | Acoplamento | Mudar a plataforma afeta todos os serviços | Nenhum entre serviços |
 | Layout da seção 4 do plano | Desvio (pasta `platform/` na raiz) | Seguido à risca |
+
+**Revisão (passo 5)**: no preview da decisão, o acesso ao Postgres aparecia "por serviço". Ao chegar o segundo serviço
+com banco (spi-fake), ficou claro que abrir o pool e aplicar migrations é infraestrutura sem domínio, igual nos
+serviços; foi para `platform/pg`. O que é de cada banco continua no serviço.
 
 ## Consequências
 

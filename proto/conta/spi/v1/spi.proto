@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package conta.spi.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 // SpiService é o contrato da liquidação no SPI. Neste projeto quem o implementa é o spi-fake
@@ -112,6 +113,8 @@ message Behavior {
   // Se verdadeiro, GetSettlement falha com UNAVAILABLE. Combina com qualquer modo, para testar
   // o prazo máximo do worker de confirmação.
   bool fail_status_queries = 2;
+  // Atraso antes de decidir cada Settle (latência simulada do SPI). Zero = nenhum.
+  google.protobuf.Duration latency = 3;
 }
 
 message SetBehaviorRequest {

@@ -1,5 +1,6 @@
-// Package postgres abre o pool de conexões do ledger com o seu banco.
-package postgres
+// Package pg abre o pool de conexões de um serviço com o seu banco Postgres (um banco por
+// serviço) e aplica as migrations. Comum aos serviços Go (ADR-0010).
+package pg
 
 import (
 	"context"
@@ -11,11 +12,24 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
-
-	"conta.local/ledger/internal/platform/config"
 )
 
 const connectTimeout = 5 * time.Second
+
+// Config é o endereço e as credenciais do banco do serviço. A senha nunca deve ir para log.
+type Config struct {
+	Host     string
+	Port     uint16
+	User     string
+	Password string
+	Database string
+	// LockTimeout limita a espera por um lock de linha; estourado, o Postgres cancela o
+	// comando (erro repetível). Zero mantém o padrão do servidor.
+	LockTimeout time.Duration
+	// MaxConns é o tamanho máximo do pool; explícito para a utilização do pool (o U do método
+	// USE) ter um denominador conhecido. Zero usa o padrão do pgx.
+	MaxConns int32
+}
 
 // Option configura o pool aberto por Open.
 type Option func(*options)
@@ -37,7 +51,7 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 //
 // Os campos da conexão são atribuídos um a um, em vez de montar uma URL, para a senha não
 // precisar de escape e nunca aparecer numa string de conexão que possa ir parar em log.
-func Open(ctx context.Context, cfg config.Postgres, opts ...Option) (*pgxpool.Pool, error) {
+func Open(ctx context.Context, cfg Config, opts ...Option) (*pgxpool.Pool, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
@@ -88,7 +102,7 @@ func Ping(ctx context.Context, pool *pgxpool.Pool) error {
 	return conn.Conn().PgConn().Ping(ctx)
 }
 
-func poolConfig(cfg config.Postgres) (*pgxpool.Config, error) {
+func poolConfig(cfg Config) (*pgxpool.Config, error) {
 	pc, err := pgxpool.ParseConfig("")
 	if err != nil {
 		return nil, fmt.Errorf("configuração do pool: %w", err)

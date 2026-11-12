@@ -5,9 +5,9 @@ import (
 	"io"
 
 	"conta.local/ledger/internal/platform/config"
-	"conta.local/ledger/internal/platform/postgres"
 	"conta.local/ledger/migrations"
 	"conta.local/platform/logging"
+	"conta.local/platform/pg"
 )
 
 // runMigrate aplica as migrations e sai: é o job que roda antes do serviço, com o papel
@@ -23,7 +23,7 @@ func runMigrate(ctx context.Context, lookup config.Lookup, stdout io.Writer) err
 	}
 	logger := logging.New(stdout, cfg.LogLevel, nil)
 
-	applied, err := postgres.Migrate(ctx, cfg.Postgres, migrations.FS)
+	applied, err := pg.Migrate(ctx, cfg.Postgres, migrations.FS)
 	if err != nil {
 		return err
 	}

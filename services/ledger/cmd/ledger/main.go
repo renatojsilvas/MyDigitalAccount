@@ -20,11 +20,11 @@ import (
 	"conta.local/ledger/internal/accountotel"
 	"conta.local/ledger/internal/grpcapi"
 	"conta.local/ledger/internal/platform/config"
-	"conta.local/ledger/internal/platform/postgres"
 	ledgerpg "conta.local/ledger/internal/postgres"
 	"conta.local/platform/admin"
 	"conta.local/platform/grpcserver"
 	"conta.local/platform/logging"
+	"conta.local/platform/pg"
 	"conta.local/platform/telemetry"
 )
 
@@ -89,7 +89,7 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 		return fmt.Errorf("ouvindo admin em %s: %w", cfg.AdminAddr, err)
 	}
 
-	pool, err := postgres.Open(ctx, cfg.Postgres, postgres.WithTelemetry(tel.Tracer, tel.Meter))
+	pool, err := pg.Open(ctx, cfg.Postgres, pg.WithTelemetry(tel.Tracer, tel.Meter))
 	if err != nil {
 		return fmt.Errorf("postgres: %w", err)
 	}
@@ -112,7 +112,7 @@ func run(ctx context.Context, lookup config.Lookup, stdout io.Writer) error {
 	healthpb.RegisterHealthServer(srv, healthSrv)
 
 	// O /readyz depende do Postgres: sem banco o ledger não pode atender (o /healthz não depende).
-	adminSrv := admin.New(logger, admin.Check{Name: "postgres", Fn: func(ctx context.Context) error { return postgres.Ping(ctx, pool) }})
+	adminSrv := admin.New(logger, admin.Check{Name: "postgres", Fn: func(ctx context.Context) error { return pg.Ping(ctx, pool) }})
 
 	logger.InfoContext(ctx, "serviço iniciando",
 		"version", version, "environment", cfg.Environment,

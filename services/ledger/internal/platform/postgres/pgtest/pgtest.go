@@ -1,5 +1,5 @@
 // Package pgtest prepara, para testes de integração, um banco do ledger migrado e um pool
-// conectado como ledger_app, o papel restrito do serviço, aberto pelo mesmo postgres.Open
+// conectado como ledger_app, o papel restrito do serviço, aberto pelo mesmo pg.Open
 // usado em produção.
 package pgtest
 
@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"conta.local/ledger/internal/platform/config"
-	"conta.local/ledger/internal/platform/postgres"
 	"conta.local/ledger/migrations"
+	"conta.local/platform/pg"
 	"conta.local/testkit/testpg"
 )
 
@@ -36,13 +36,13 @@ func Migrated(t testing.TB, lockTimeout time.Duration) (*testpg.Database, *pgxpo
 	db.EnsureRole(t, AppRole, AppPassword)
 
 	admin := Config(db)
-	if _, err := postgres.Migrate(t.Context(), admin, migrations.FS); err != nil {
+	if _, err := pg.Migrate(t.Context(), admin, migrations.FS); err != nil {
 		t.Fatalf("pgtest: migrations: %v", err)
 	}
 
 	app := admin
 	app.User, app.Password, app.LockTimeout = AppRole, AppPassword, lockTimeout
-	pool, err := postgres.Open(t.Context(), app)
+	pool, err := pg.Open(t.Context(), app)
 	if err != nil {
 		t.Fatalf("pgtest: abrindo pool como %s: %v", AppRole, err)
 	}

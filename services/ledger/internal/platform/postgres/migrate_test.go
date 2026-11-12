@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"conta.local/ledger/internal/account"
-	"conta.local/ledger/internal/platform/postgres"
 	"conta.local/ledger/internal/platform/postgres/pgtest"
 	"conta.local/ledger/migrations"
+	"conta.local/platform/pg"
 	"conta.local/testkit/testpg"
 )
 
@@ -22,6 +22,16 @@ const (
 	codeCheckViolation        = "23514"
 	codeInsufficientPrivilege = "42501"
 )
+
+// Os testes deste pacote conferem o schema do ledger (migrations, constraints, privilégios);
+// abrir o pool e aplicar migrations é de conta.local/platform/pg.
+
+func fromTestDB(db *testpg.Database) pg.Config {
+	return pg.Config{
+		Host: db.Config.Host, Port: db.Config.Port, User: db.Config.User,
+		Password: db.Config.Password, Database: db.Name,
+	}
+}
 
 // migrated devolve um pool como ledger_app num banco já migrado.
 func migrated(t *testing.T) *pgxpool.Pool {
@@ -44,14 +54,14 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	db.EnsureRole(t, pgtest.AppRole, pgtest.AppPassword)
 	cfg := fromTestDB(db)
 
-	first, err := postgres.Migrate(t.Context(), cfg, migrations.FS)
+	first, err := pg.Migrate(t.Context(), cfg, migrations.FS)
 	if err != nil {
 		t.Fatalf("primeira execução: %v", err)
 	}
 	if len(first) == 0 || first[0].Version != 1 {
 		t.Fatalf("primeira execução aplicou %+v, want a partir da versão 1", first)
 	}
-	second, err := postgres.Migrate(t.Context(), cfg, migrations.FS)
+	second, err := pg.Migrate(t.Context(), cfg, migrations.FS)
 	if err != nil || len(second) != 0 {
 		t.Fatalf("segunda execução = %+v, %v; want nada a aplicar", second, err)
 	}
@@ -293,7 +303,7 @@ func TestMigration2BackfillsReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := postgres.Migrate(t.Context(), cfg, fstest.MapFS{"00001_ledger_schema.sql": {Data: first}}); err != nil {
+	if _, err := pg.Migrate(t.Context(), cfg, fstest.MapFS{"00001_ledger_schema.sql": {Data: first}}); err != nil {
 		t.Fatalf("aplicando só a 00001: %v", err)
 	}
 
@@ -319,7 +329,7 @@ func TestMigration2BackfillsReason(t *testing.T) {
 		t.Fatalf("gravando lançamentos antigos: %v", err)
 	}
 
-	applied, err := postgres.Migrate(t.Context(), cfg, migrations.FS)
+	applied, err := pg.Migrate(t.Context(), cfg, migrations.FS)
 	if err != nil {
 		t.Fatalf("aplicando o resto: %v", err)
 	}

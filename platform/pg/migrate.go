@@ -1,4 +1,4 @@
-package postgres
+package pg
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
-
-	"conta.local/ledger/internal/platform/config"
 )
 
 // Applied descreve uma migration aplicada nesta execução.
@@ -25,7 +23,7 @@ type Applied struct {
 //
 // O session locker usa um advisory lock do Postgres: se duas réplicas do job rodarem ao mesmo
 // tempo, a segunda espera a primeira terminar e então não encontra nada pendente.
-func Migrate(ctx context.Context, cfg config.Postgres, fsys fs.FS) ([]Applied, error) {
+func Migrate(ctx context.Context, cfg Config, fsys fs.FS) ([]Applied, error) {
 	pc, err := poolConfig(cfg)
 	if err != nil {
 		return nil, err
